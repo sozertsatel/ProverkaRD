@@ -425,6 +425,31 @@ public class EngineRulesTests
     }
 
     [Fact]
+    public void Stamp_splits_the_first_initial_into_its_own_word()
+    {
+        var surnames = RdParser.CollectSurnames(
+        [
+            new RdParser.RdPage(1, "Турникетно-кассовый павильон\nКотельная установка", ""),
+            new RdParser.RdPage(
+                3,
+                "Чертёж",
+                "Разработал Иванова К .А. Турникетно-кассовый павильон\nПроверил Петрових С .В.\nН. контр. Дальская М .В.\nГИП Северов А .В.\nКотельная №3. Тепломеханические решения"),
+            new RdParser.RdPage(4, "Ведомость объемов работ", ""),
+            new RdParser.RdPage(5, "Согласовано Белов Б.Б.", "Светина С .С."),
+        ]);
+        Assert.Contains(surnames, s => s == "Иванова");
+        Assert.Contains(surnames, s => s == "Петрових");
+        Assert.Contains(surnames, s => s == "Дальская");
+        Assert.Contains(surnames, s => s == "Северов");
+        Assert.DoesNotContain(surnames, s => s.Contains("Турникетно", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("кассовый", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Котельная", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Тепломеханические", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Белов", StringComparison.Ordinal));
+        Assert.DoesNotContain(surnames, s => s.Contains("Светина", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Name_words_and_hyphen_parts_are_not_surnames()
     {
         var surnames = RdParser.CollectSurnames(
