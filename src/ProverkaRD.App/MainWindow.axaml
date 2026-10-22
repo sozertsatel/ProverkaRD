@@ -10,6 +10,7 @@
     <Window.Resources>
         <local:SeverityTextConverter x:Key="SevText"/>
         <local:SeverityBrushConverter x:Key="SevBrush"/>
+        <local:StateBrushConverter x:Key="StateBrush"/>
     </Window.Resources>
 
     <DockPanel>
@@ -18,14 +19,22 @@
                 <StackPanel Spacing="4">
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <TextBlock Text="Проверка РД" FontSize="28" FontWeight="Bold" Foreground="White"/>
-                        <TextBlock x:Name="VersionText" Text="0.0.9" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+                        <TextBlock x:Name="VersionText" Text="0.1.0" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
                     </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <Button Content="Настройки" Click="OnSettings"/>
                 </StackPanel>
-                <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" IsIndeterminate="True" IsVisible="{Binding Busy}" Height="3" Margin="0,10,0,0"/>
             </Grid>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Padding="18,10" Background="{Binding StateKind, Converter={StaticResource StateBrush}}">
+            <StackPanel Spacing="6">
+                <TextBlock Text="{Binding StateTitle}" FontWeight="SemiBold" FontSize="16"/>
+                <TextBlock Text="{Binding StateDetail}" TextWrapping="Wrap"/>
+                <ProgressBar Minimum="0" Maximum="1" Value="{Binding ProgressValue}" IsVisible="{Binding ShowProgress}" Height="8"/>
+                <TextBlock Text="{Binding ProgressText}" IsVisible="{Binding ShowProgress}" FontWeight="SemiBold"/>
+            </StackPanel>
         </Border>
 
         <Border DockPanel.Dock="Top" Background="White" Padding="18,12" BorderBrush="#E2E7EE" BorderThickness="0,0,0,1">
@@ -200,6 +209,17 @@
                                 <DataGridTextColumn Header="В ВЭСР" Binding="{Binding InVesr}" Width="220"/>
                                 <DataGridTextColumn Header="Где" Binding="{Binding Places}" Width="280"/>
                                 <DataGridTextColumn Header="Где ошибка" Binding="{Binding ErrorWhere}" Width="280"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </TabItem>
+                    <TabItem Header="Пропуски">
+                        <DataGrid ItemsSource="{Binding FilteredNotices}" IsReadOnly="True" CanUserSortColumns="True"
+                                  GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
+                                  AutoGenerateColumns="False">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Источник" Binding="{Binding Source}" Width="140"/>
+                                <DataGridTextColumn Header="Место" Binding="{Binding Place}" Width="360"/>
+                                <DataGridTextColumn Header="Сообщение" Binding="{Binding Message}" Width="640"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </TabItem>

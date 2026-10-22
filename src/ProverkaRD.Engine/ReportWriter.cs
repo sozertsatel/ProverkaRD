@@ -1,3 +1,5 @@
+using System.IO.Compression;
+using System.Text;
 using ClosedXML.Excel;
 
 namespace ProverkaRD.Engine;
@@ -7,18 +9,68 @@ public static class ReportWriter
     public static void Write(CheckReport report, string path, string? appVersion = null)
     {
         using var workbook = new XLWorkbook();
+        workbook.Style.Font.FontName = SeverityPalette.FontName;
+        workbook.Style.Font.FontSize = 11;
+        workbook.Style.Font.SetFontScheme(XLFontScheme.None);
         WriteSummary(workbook, report, appVersion);
         WriteKits(workbook, report, appVersion);
         WriteFindings(workbook, report, appVersion);
+        WriteNotices(workbook, report, appVersion);
+        foreach (var sheet in workbook.Worksheets)
+        {
+            var used = sheet.RangeUsed();
+            if (used is null)
+                continue;
+            used.Style.Font.FontName = SeverityPalette.FontName;
+            used.Style.Font.SetFontScheme(XLFontScheme.None);
+        }
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
         workbook.SaveAs(path);
+        UseSegoeInPackage(path);
+    }
+
+    /// <summary>
+    /// ClosedXML оставляет нулевой шрифт книги Calibri, даже если стиль ячеек уже Segoe UI.
+    /// В пакете нулевой шрифт и шрифт темы заменяются, чтобы вся книга была одним шрифтом.
+    /// </summary>
+    private static void UseSegoeInPackage(string path)
+    {
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Update);
+        ReplaceEntry(zip, "xl/styles.xml", xml => ReplaceFirst(xml, "val=\"Calibri\"", "val=\"" + SeverityPalette.FontName + "\""));
+        ReplaceEntry(zip, "xl/theme/theme1.xml", xml => xml.Replace("typeface=\"Calibri\"", "typeface=\"" + SeverityPalette.FontName + "\"", StringComparison.Ordinal));
+    }
+
+    private static void ReplaceEntry(ZipArchive zip, string name, Func<string, string> edit)
+    {
+        var entry = zip.GetEntry(name);
+        if (entry is null)
+            return;
+        string xml;
+        using (var stream = entry.Open())
+        using (var reader = new StreamReader(stream, Encoding.UTF8))
+            xml = reader.ReadToEnd();
+        var updated = edit(xml);
+        if (updated == xml)
+            return;
+        entry.Delete();
+        var created = zip.CreateEntry(name, CompressionLevel.Optimal);
+        using var output = created.Open();
+        using var writer = new StreamWriter(output, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        writer.Write(updated);
+    }
+
+    private static string ReplaceFirst(string text, string oldValue, string newValue)
+    {
+        var index = text.IndexOf(oldValue, StringComparison.Ordinal);
+        return index < 0 ? text : text[..index] + newValue + text[(index + oldValue.Length)..];
     }
 
     private static void WriteSummary(XLWorkbook workbook, CheckReport report, string? appVersion)
     {
         var sheet = workbook.AddWorksheet("Сводка");
+        UseFont(sheet);
         var headers = new[]
         {
             "Элемент", "Итог", "Критично", "Оформление", "Предупреждения", "Комплектность", "Акт",
@@ -42,7 +94,7 @@ public static class ReportWriter
             + "    Оформление: " + formatting
             + "    Предупреждения: " + warnings;
         sheet.Range(2, 1, 2, headers.Length).Merge();
-        sheet.Cell(3, 1).Value = "Красный — критично. Жёлтый — ошибка оформления. Оранжевый — предупреждение. Зелёный — совпадает. Итог акта — худший статус замечаний, комплектов, комплектности и сумм.";
+        sheet.Cell(3, 1).Value = "Критично — красный. Оформление — жёлтый. Предупреждение — оранжевый. ОК — зелёный. Итог акта — худший статус замечаний, комплектов, комплектности и сумм. Пропуски — на листе «Пропуски», без обрезки списка.";
         sheet.Range(3, 1, 3, headers.Length).Merge();
         sheet.Cell(3, 1).Style.Alignment.WrapText = true;
 
@@ -94,11 +146,13 @@ public static class ReportWriter
             var overall = SeverityText.Worst(rows[i].Score.Overall, rows[i].Act.Overall);
             Status(sheet.Cell(headerRow + 1 + i, 2), overall);
         }
+        Outline(sheet, headerRow, 1, Math.Max(totalRow, headerRow), headers.Length);
     }
 
     private static void WriteKits(XLWorkbook workbook, CheckReport report, string? appVersion)
     {
         var sheet = workbook.AddWorksheet("Комплекты");
+        UseFont(sheet);
         const int columns = 21;
         sheet.Cell(1, 1).Value = Titled("Комплекты рабочей документации", appVersion);
         sheet.Cell(1, 1).Style.Font.Bold = true;
@@ -164,7 +218,7 @@ public static class ReportWriter
             row++;
         }
 
-        sheet.SheetView.FreezeRows(headerRow);
+        sheet.SheetView.Freeze(headerRow, 2);
         if (report.Kits.Count > 0)
             sheet.Range(headerRow, 1, row - 1, columns).SetAutoFilter();
         Widths(sheet, columns);
@@ -181,11 +235,20 @@ public static class ReportWriter
                     advance.Style.NumberFormat.Format = "0,00";
             }
         }
+        var blockEnd = Math.Max(row - 1, headerRow);
+        Outline(sheet, groupRow, 1, blockEnd, 3);
+        Outline(sheet, groupRow, 4, blockEnd, 7);
+        Outline(sheet, groupRow, 8, blockEnd, 11);
+        Outline(sheet, groupRow, 12, blockEnd, 15);
+        Outline(sheet, groupRow, 16, blockEnd, 17);
+        Outline(sheet, groupRow, 18, blockEnd, 20);
+        Outline(sheet, groupRow, 21, blockEnd, 21);
     }
 
     private static void WriteFindings(XLWorkbook workbook, CheckReport report, string? appVersion)
     {
         var sheet = workbook.AddWorksheet("Замечания");
+        UseFont(sheet);
         var headers = new[]
         {
             "№", "Элемент", "Критичность", "Что проверялось",
@@ -233,6 +296,39 @@ public static class ReportWriter
         sheet.Column(10).Width = 22;
         if (row > headerRow + 1)
             sheet.Rows(headerRow + 1, row - 1).Style.Alignment.WrapText = true;
+        Outline(sheet, headerRow, 1, Math.Max(row - 1, headerRow), headers.Length);
+    }
+
+    private static void WriteNotices(XLWorkbook workbook, CheckReport report, string? appVersion)
+    {
+        var sheet = workbook.AddWorksheet("Пропуски");
+        UseFont(sheet);
+        var headers = new[] { "Источник", "Место", "Сообщение" };
+        sheet.Cell(1, 1).Value = Titled("Пропуски и ошибки чтения", appVersion);
+        sheet.Cell(1, 1).Style.Font.Bold = true;
+        sheet.Cell(1, 1).Style.Font.FontSize = 16;
+        sheet.Range(1, 1, 1, headers.Length).Merge();
+        sheet.Cell(2, 1).Value = "Каждый непрочитанный файл, пропущенная строка и сбой разбора. Список не обрезается.";
+        sheet.Range(2, 1, 2, headers.Length).Merge();
+        const int headerRow = 4;
+        for (var i = 0; i < headers.Length; i++)
+            sheet.Cell(headerRow, i + 1).Value = headers[i];
+        StyleHeader(sheet.Range(headerRow, 1, headerRow, headers.Length));
+        var row = headerRow + 1;
+        foreach (var notice in report.Notices)
+        {
+            sheet.Cell(row, 1).Value = notice.Source;
+            sheet.Cell(row, 2).Value = notice.Place;
+            sheet.Cell(row, 3).Value = notice.Message;
+            row++;
+        }
+        sheet.SheetView.FreezeRows(headerRow);
+        sheet.Column(1).Width = 22;
+        sheet.Column(2).Width = 42;
+        sheet.Column(3).Width = 88;
+        if (row > headerRow + 1)
+            sheet.Rows(headerRow + 1, row - 1).Style.Alignment.WrapText = true;
+        Outline(sheet, headerRow, 1, Math.Max(row - 1, headerRow), headers.Length);
     }
 
     private static string Titled(string title, string? version) =>
@@ -244,6 +340,8 @@ public static class ReportWriter
         range.Merge();
         range.Value = title;
         range.Style.Font.Bold = true;
+        range.Style.Font.FontName = SeverityPalette.FontName;
+        range.Style.Font.SetFontScheme(XLFontScheme.None);
         range.Style.Font.FontColor = XLColor.White;
         range.Style.Fill.BackgroundColor = XLColor.FromHtml(color);
         range.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
@@ -254,8 +352,10 @@ public static class ReportWriter
     private static void StyleHeader(IXLRange range)
     {
         range.Style.Font.Bold = true;
+        range.Style.Font.FontName = SeverityPalette.FontName;
+        range.Style.Font.SetFontScheme(XLFontScheme.None);
         range.Style.Font.FontColor = XLColor.White;
-        range.Style.Fill.BackgroundColor = XLColor.FromHtml("#1F4E79");
+        range.Style.Fill.BackgroundColor = XLColor.FromHtml(SeverityPalette.Header);
         range.Style.Alignment.WrapText = true;
         range.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
         range.Worksheet.Row(range.FirstRow().RowNumber()).Height = 32;
@@ -273,13 +373,9 @@ public static class ReportWriter
 
     private static void Paint(IXLCell cell, Severity severity)
     {
-        cell.Style.Fill.BackgroundColor = severity switch
-        {
-            Severity.Critical => XLColor.FromHtml("#F4C7C3"),
-            Severity.Formatting => XLColor.FromHtml("#FFE08A"),
-            Severity.Warning => XLColor.FromHtml("#F8CBAD"),
-            _ => XLColor.FromHtml("#C6EFCE"),
-        };
+        cell.Style.Font.FontName = SeverityPalette.FontName;
+        cell.Style.Font.SetFontScheme(XLFontScheme.None);
+        cell.Style.Fill.BackgroundColor = XLColor.FromHtml(SeverityPalette.For(severity));
     }
 
     private static void YesNo(IXLCell cell, string text, Severity whenMissing)
@@ -310,7 +406,21 @@ public static class ReportWriter
             return;
         cell.Style.Font.FontColor = XLColor.FromHtml("#7F1D1D");
         cell.Style.Font.Bold = true;
-        cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#F4C7C3");
+        cell.Style.Fill.BackgroundColor = XLColor.FromHtml(SeverityPalette.Critical);
+    }
+
+    private static void UseFont(IXLWorksheet sheet)
+    {
+        sheet.Style.Font.FontName = SeverityPalette.FontName;
+        sheet.Style.Font.FontSize = 11;
+        sheet.Style.Font.SetFontScheme(XLFontScheme.None);
+    }
+
+    private static void Outline(IXLWorksheet sheet, int fromRow, int fromCol, int toRow, int toCol)
+    {
+        var range = sheet.Range(fromRow, fromCol, toRow, toCol);
+        range.Style.Border.OutsideBorder = XLBorderStyleValues.Thick;
+        range.Style.Border.OutsideBorderColor = XLColor.FromHtml(SeverityPalette.Ink);
     }
 
     private static bool Differs(string text, IReadOnlyList<string> peers)

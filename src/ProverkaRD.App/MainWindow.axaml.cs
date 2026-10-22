@@ -8,6 +8,7 @@ using Avalonia.Layout;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using ProverkaRD.Engine;
 using ProverkaRD.Engine.Parsing;
 
@@ -81,8 +82,19 @@ public partial class MainWindow : Window
     private void OnClearRd(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ClearRd();
     private void OnClearActs(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ActFiles.Clear();
 
-    private void OnRdDrop(object? sender, DragEventArgs e) => DropInto(e, _model.AddRd);
-    private void OnActDrop(object? sender, DragEventArgs e) => DropInto(e, _model.AddAct);
+    private void OnRdDrop(object? sender, DragEventArgs e)
+    {
+        if (_model.Busy)
+            return;
+        DropInto(e, _model.AddRd);
+    }
+
+    private void OnActDrop(object? sender, DragEventArgs e)
+    {
+        if (_model.Busy)
+            return;
+        DropInto(e, _model.AddAct);
+    }
 
     private void OnExcelDragOver(object? sender, DragEventArgs e)
     {
@@ -106,17 +118,20 @@ public partial class MainWindow : Window
             return;
         }
 
-        _model.Busy = true;
-        _model.StatusText = "Идёт проверка. Ведомость ВЭСР большая, это занимает несколько секунд.";
+        _model.BeginCheck();
         var input = _model.BuildInput();
+        var progress = new Progress<CheckProgress>(step =>
+            Dispatcher.UIThread.Post(() => _model.ReportProgress(step)));
         try
         {
-            var report = await Task.Run(() => new CheckingEngine().Run(input));
+            var report = await Task.Run(() => new CheckingEngine().Run(input, progress));
             _model.Apply(report);
+            RunLog.Summary(report, input);
         }
         catch (Exception ex)
         {
-            _model.StatusText = "Проверка остановилась: " + ex.Message;
+            RunLog.Error("Проверка", ex);
+            _model.Fail(ex.Message);
         }
         finally
         {
@@ -217,6 +232,8 @@ public partial class MainWindow : Window
 
     private void DropWorkbook(DragEventArgs e, Action<string> set, string title)
     {
+        if (_model.Busy)
+            return;
         var files = e.DataTransfer.TryGetFiles();
         if (files is null)
             return;
@@ -255,6 +272,12 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     private string _status = "Загрузите ВЭРД и ВЭСР, добавьте акты и комплекты, затем нажмите «Проверить».";
     private string _filter = "";
     private string _summary = "Результатов пока нет.";
+    private string _stateKind = "idle";
+    private string _stateTitle = "Ожидание";
+    private string _stateDetail = "Загрузите ВЭРД и ВЭСР, добавьте акты и комплекты, затем нажмите «Проверить».";
+    private double _progressValue;
+    private string _progressText = "";
+    private bool _showProgress;
     private CheckReport? _report;
 
     public ObservableCollection<InputFile> RdFiles { get; } = [];
@@ -263,6 +286,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     public ObservableCollection<ActResult> FilteredActs { get; } = [];
     public ObservableCollection<KitResult> FilteredKits { get; } = [];
     public ObservableCollection<Finding> FilteredFindings { get; } = [];
+    public ObservableCollection<Notice> FilteredNotices { get; } = [];
 
     public WorkspaceModel()
     {
@@ -322,6 +346,50 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         private set { _summary = value; Raise(); }
     }
 
+    public string StateKind => _stateKind;
+    public string StateTitle => _stateTitle;
+    public string StateDetail => _stateDetail;
+    public double ProgressValue => _progressValue;
+    public string ProgressText => _progressText;
+    public bool ShowProgress => _showProgress;
+
+    public void BeginCheck()
+    {
+        Busy = true;
+        _showProgress = true;
+        _progressValue = 0;
+        _progressText = "";
+        SetState("checking", "Идёт проверка", "Подготовка списка файлов.");
+        Raise(nameof(ShowProgress));
+        Raise(nameof(ProgressValue));
+        Raise(nameof(ProgressText));
+    }
+
+    public void ReportProgress(CheckProgress step)
+    {
+        _showProgress = true;
+        _progressValue = step.Total <= 0 ? 0 : (double)step.Done / step.Total;
+        _progressText = step.Done + " из " + step.Total + ": " + step.FileName;
+        SetState("checking", "Идёт проверка", _progressText);
+        Raise(nameof(ShowProgress));
+        Raise(nameof(ProgressValue));
+        Raise(nameof(ProgressText));
+    }
+
+    public void Fail(string message)
+    {
+        _showProgress = false;
+        SetState("failed", "Проверка не выполнена", message);
+        StatusText = "Проверка не выполнена: " + message;
+        Raise(nameof(ShowProgress));
+    }
+
+    public void MarkEmptyFolder(string detail)
+    {
+        SetState("empty", "Папка пуста", detail);
+        StatusText = detail;
+    }
+
     public string FilterText
     {
         get => _filter;
@@ -335,14 +403,17 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
 
     public void AddRd(string path)
     {
-        if (Directory.Exists(path))
+        var folder = Directory.Exists(path);
+        if (folder)
         {
             var full = Path.GetFullPath(path);
-            if (!RdFolders.Any(folder => string.Equals(folder, full, StringComparison.OrdinalIgnoreCase)))
+            if (!RdFolders.Any(item => string.Equals(item, full, StringComparison.OrdinalIgnoreCase)))
                 RdFolders.Add(full);
         }
 
-        AddPath(path, RdFiles, [".pdf", ".docx"], withSignature: true);
+        var added = AddPath(path, RdFiles, [".pdf", ".docx"], withSignature: true);
+        if (folder && added == 0)
+            MarkEmptyFolder("В папке нет комплектов РД (PDF или DOCX). Файлы .СВОР и _ИЗМ в список не попадают.");
     }
 
     public void ClearRd()
@@ -350,7 +421,13 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         RdFiles.Clear();
         RdFolders.Clear();
     }
-    public void AddAct(string path) => AddPath(path, ActFiles, [".docx"], withSignature: false);
+    public void AddAct(string path)
+    {
+        var folder = Directory.Exists(path);
+        var added = AddPath(path, ActFiles, [".docx"], withSignature: false);
+        if (folder && added == 0)
+            MarkEmptyFolder("В папке нет актов (DOCX).");
+    }
 
     public void RemoveRd(IReadOnlyList<InputFile> items)
     {
@@ -385,11 +462,42 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         var ok = report.Acts.Count(a => a.Overall == Severity.Ok);
         var counts = string.IsNullOrWhiteSpace(report.Load.Text) ? "" : report.Load.Text + Environment.NewLine;
         SummaryText = counts + $"Критично: {critical} · оформление: {formatting} · предупреждения: {warnings} · актов без замечаний: {ok}";
-        StatusText = report.Problems.Count > 0
-            ? "Проверка завершена. " + report.Problems[0]
-            : "Проверка завершена. Цвет строки — худший статус. Подробности на листе «Замечания» и в файле Excel.";
+        _showProgress = false;
+        Raise(nameof(ShowProgress));
+        var detail = SummaryText.Replace(Environment.NewLine, " ");
+        if (report.LockedFiles > 0)
+            SetState("locked", "Файл занят другой программой", "Закройте файл в Excel или Word и повторите проверку. " + detail);
+        else if (report.VerdUnreadable || report.VesrUnreadable)
+            SetState("unreadable", "Ведомость не читается", FirstProblem(report, "ВЭРД или ВЭСР не удалось прочитать.") + " " + detail);
+        else if (report.VerdMissing || report.VesrMissing)
+            SetState("missing", "Нет ведомости", MissingText(report) + " " + detail);
+        else
+            SetState("finished", "Проверка завершена", detail);
+        StatusText = _stateDetail;
         Raise(nameof(CanExport));
         Refilter();
+    }
+
+    private static string MissingText(CheckReport report)
+    {
+        if (report.VerdMissing && report.VesrMissing)
+            return "ВЭРД и ВЭСР не загружены.";
+        return report.VerdMissing ? "ВЭРД не загружена." : "ВЭСР не загружена.";
+    }
+
+    private static string FirstProblem(CheckReport report, string fallback) =>
+        report.Problems.FirstOrDefault(problem => problem.Contains("Не удалось", StringComparison.Ordinal) || problem.Contains("занят", StringComparison.Ordinal))
+        ?? report.Problems.FirstOrDefault()
+        ?? fallback;
+
+    private void SetState(string kind, string title, string detail)
+    {
+        _stateKind = kind;
+        _stateTitle = title;
+        _stateDetail = detail;
+        Raise(nameof(StateKind));
+        Raise(nameof(StateTitle));
+        Raise(nameof(StateDetail));
     }
 
     private void Refilter()
@@ -397,6 +505,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         FilteredActs.Clear();
         FilteredKits.Clear();
         FilteredFindings.Clear();
+        FilteredNotices.Clear();
         if (_report is null)
             return;
         var needle = _filter.Trim();
@@ -406,6 +515,8 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
             FilteredKits.Add(kit);
         foreach (var finding in _report.Findings.Where(f => Hits(needle, f.Act, f.Kit, f.ElementNo, f.CheckName, f.ValueA, f.ValueB, f.InAct, f.InRd, f.InVerd, f.InVesr, f.Places, f.ErrorWhere)))
             FilteredFindings.Add(finding);
+        foreach (var notice in _report.Notices.Where(n => Hits(needle, n.Source, n.Place, n.Message)))
+            FilteredNotices.Add(notice);
     }
 
     private static bool Hits(string needle, params string?[] parts)
@@ -415,15 +526,18 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         return parts.Any(p => p?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true);
     }
 
-    private void AddPath(string path, ObservableCollection<InputFile> target, string[] extensions, bool withSignature)
+    private int AddPath(string path, ObservableCollection<InputFile> target, string[] extensions, bool withSignature)
     {
-        if (Directory.Exists(path))
+        var before = target.Count;
+        var io = SafePath.ForIo(path);
+        if (Directory.Exists(io))
         {
-            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            foreach (var file in Directory.EnumerateFiles(io, "*", SearchOption.AllDirectories))
                 TryAddFile(file, target, extensions, withSignature);
-            return;
+            return target.Count - before;
         }
-        TryAddFile(path, target, extensions, withSignature);
+        TryAddFile(io, target, extensions, withSignature);
+        return target.Count - before;
     }
 
     private static void TryAddFile(string path, ObservableCollection<InputFile> target, string[] extensions, bool withSignature)

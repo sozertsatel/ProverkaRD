@@ -19,6 +19,9 @@
         <TextBox x:Name="VatBox" Width="120" HorizontalAlignment="Left"/>
         <CheckBox x:Name="UpdatesBox" Content="Проверять обновления при запуске"/>
         <Button Content="Принудительное обновление" Click="OnForceUpdate" HorizontalAlignment="Left"/>
+        <Button Content="Открыть журнал" Click="OnOpenLog" HorizontalAlignment="Left"/>
+        <TextBlock TextWrapping="Wrap" Foreground="#5C6B7A"
+                   Text="Журнал лежит в %LOCALAPPDATA%\ProverkaRD\logs. Туда пишутся сбои и итог запуска: имена файлов, без текста документов."/>
         <TextBlock TextWrapping="Wrap" Foreground="#5C6B7A"
                    Text="Скачивает последний релиз и ставит его заново, даже если версия совпадает с установленной. Проверка SHA256 и замена файла — те же, что у обычного обновления."/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">

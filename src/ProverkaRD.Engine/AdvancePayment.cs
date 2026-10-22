@@ -28,7 +28,7 @@ public static partial class AdvancePayment
             return null;
         if (kop is < 0 or > 99)
             return null;
-        return rub + kop / 100m;
+        return MoneyDecimal.Kopecks(rub + kop / 100m);
     }
 
     [GeneratedRegex(

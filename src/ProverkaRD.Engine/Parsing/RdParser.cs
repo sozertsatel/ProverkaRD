@@ -1,3 +1,4 @@
+using ProverkaRD.Engine;
 using System.Text;
 using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
@@ -35,6 +36,7 @@ public static partial class RdParser
     public static RdDocument Parse(string path)
     {
         var errors = new List<string>();
+        var notices = new List<Notice>();
         var cipherFromName = FirstCipher(Path.GetFileNameWithoutExtension(path));
         string titleText = "";
         string fullText = "";
@@ -54,7 +56,7 @@ public static partial class RdParser
         }
         catch (Exception ex)
         {
-            errors.Add("Не удалось прочитать комплект: " + ex.Message);
+            errors.Add(FileProblems.Describe(path, ex));
         }
 
         var title = ExtractTitle(titleText);
@@ -113,6 +115,7 @@ public static partial class RdParser
             SignatureParsed = parsed,
             SignatureError = signatureError,
             Errors = errors,
+            Notices = notices,
         };
     }
 

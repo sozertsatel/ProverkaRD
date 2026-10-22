@@ -43,6 +43,18 @@ public partial class SettingsWindow : Window
         await UpdateFlow.RunAsync(this, interactive: true, force: true);
     }
 
+    private void OnOpenLog(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            RunLog.Open();
+        }
+        catch (Exception ex)
+        {
+            RunLog.Error("Открыть журнал", ex);
+        }
+    }
+
     private void OnClose(object? sender, RoutedEventArgs e)
     {
         Save();

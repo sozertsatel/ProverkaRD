@@ -1,0 +1,410 @@
+using System.IO.Compression;
+using ClosedXML.Excel;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Wordprocessing;
+using ProverkaRD.Engine.Parsing;
+
+namespace ProverkaRD.Engine.Tests;
+
+public class RobustnessTests
+{
+    [Fact]
+    public void Money_is_decimal_and_excel_doubles_round_to_kopecks()
+    {
+        Assert.Equal(0.30m, MoneyDecimal.FromExcelDouble(0.1 + 0.2));
+        Assert.Equal(1.01m, MoneyDecimal.Kopecks(1.005m));
+        Assert.Equal(1.00m, MoneyDecimal.Kopecks(1.004m));
+        Assert.Equal(1234.50m, TextMatch.ParseMoney("1 234,50"));
+        Assert.Equal(1556042.07m, TextMatch.ParseMoney("1 556 042,07"));
+        Assert.Equal("7.46", MoneyDecimal.ExcelNumberText(7.46));
+
+        using var book = new XLWorkbook();
+        var sheet = book.AddWorksheet("ВЭ");
+        sheet.Cell(1, 1).Value = 0.1 + 0.2;
+        sheet.Cell(2, 1).Value = 1234.50m;
+        Assert.Equal(0.30m, MoneyDecimal.ReadMoney(sheet.Cell(1, 1)));
+        Assert.Equal(1234.50m, MoneyDecimal.ReadMoney(sheet.Cell(2, 1)));
+        Assert.Equal(XLDataType.Number, sheet.Cell(1, 1).DataType);
+    }
+
+    [Fact]
+    public void Locked_file_is_described_without_reading_it()
+    {
+        var locked = new IOException("The process cannot access the file", unchecked((int)0x80070020));
+        Assert.True(FileProblems.IsLocked(locked));
+        Assert.True(FileProblems.IsLocked(new InvalidOperationException("снаружи", locked)));
+        Assert.False(FileProblems.IsLocked(new IOException("disk full")));
+
+        var text = FileProblems.Describe(@"C:\папка\ведомость.xlsx", locked);
+        Assert.Contains("занят другой программой", text);
+        Assert.Contains("ведомость.xlsx", text);
+        Assert.DoesNotContain("ведомость.xlsx".Replace("ведомость", "секрет"), text);
+    }
+
+    [Fact]
+    public void Long_windows_paths_get_the_extended_prefix()
+    {
+        Assert.Equal(@"C:\short.xlsx", SafePath.PrefixIfLong(@"C:\short.xlsx"));
+        var local = @"C:\" + new string('a', 260);
+        Assert.True(local.Length >= SafePath.LegacyMax);
+        Assert.Equal(@"\\?\" + local, SafePath.PrefixIfLong(local));
+
+        var unc = @"\\server\share\" + new string('b', 260);
+        Assert.StartsWith(@"\\?\UNC\server\share\", SafePath.PrefixIfLong(unc));
+        Assert.Equal(@"\\?\C:\already", SafePath.PrefixIfLong(@"\\?\C:\already"));
+        Assert.Equal("чертёж ё.xlsx", SafePath.FileName(@"\\?\C:\очень длинный\чертёж ё.xlsx"));
+    }
+
+    [Fact]
+    public void Unusual_and_long_file_names_are_readable()
+    {
+        var root = Directory.CreateTempSubdirectory("proverkard-long");
+        try
+        {
+            var name = "чертёж ё 'файл' \u05D0 \U0001F600.pdf";
+            var current = root.FullName;
+            string path;
+            try
+            {
+                path = Nest(current, name);
+                File.WriteAllBytes(path, [1, 2, 3, 4]);
+            }
+            catch (Exception ex) when (ex is IOException or ArgumentException)
+            {
+                name = "чертёж ё 'файл' \u05D0.pdf";
+                path = Nest(current, name);
+                File.WriteAllBytes(path, [1, 2, 3, 4]);
+            }
+
+            Assert.True(path.Length > 270, path);
+            Assert.Equal(new byte[] { 1, 2, 3, 4 }, SharedRead.Bytes(path));
+            var parsed = RdParser.Parse(path);
+            Assert.Equal(name, parsed.FileName);
+            Assert.NotNull(parsed.Errors);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Skipped_rows_missing_sheet_and_duplicates_are_listed_without_a_cap()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-notices");
+        try
+        {
+            var vesr = Path.Combine(dir.FullName, "vesr.xlsx");
+            WriteNoisyVesr(vesr, extraSkipped: 40);
+            var aux = Path.Combine(dir.FullName, "пояснение_ИЗМ.pdf");
+            File.WriteAllBytes(aux, "aux"u8.ToArray());
+            var sig = Path.Combine(dir.FullName, "пояснение.pdf.sig");
+            File.WriteAllBytes(sig, "sig"u8.ToArray());
+            var act = Path.Combine(dir.FullName, "РД 4.10.docx");
+            WriteBrokenAct(act);
+
+            var steps = new List<CheckProgress>();
+            var report = new CheckingEngine().Run(new CheckInput
+            {
+                VesrPath = vesr,
+                ActPaths = [act],
+                RdPaths = [aux, sig, dir.FullName],
+            }, new SyncProgress(steps));
+
+            Assert.True(report.VerdMissing);
+            Assert.Contains(report.Notices, n => n.Message.Contains("ВЭРД не загружена"));
+            Assert.Contains(report.Notices, n => n.Source == "ВЭСР" && n.Message.Contains("Лист «ВЭ» не найден"));
+            Assert.Contains(report.Notices, n => n.Message.Contains("Пропущена строка-номер"));
+            Assert.Contains(report.Notices, n => n.Message.Contains("Повтор кода"));
+            Assert.Equal(40, report.Notices.Count(n => n.Message.Contains("Строка без кода элемента пропущена")));
+            Assert.Contains(report.Notices, n => n.Message.Contains("Ячейка не разобрана как сумма"));
+            Assert.Contains(report.Notices, n => n.Message.Contains("Пропущен вспомогательный файл"));
+            Assert.Contains(report.Notices, n => n.Message.Contains("Файл подписи не является комплектом"));
+            Assert.Contains(report.Notices, n => n.Message.Contains("Это папка"));
+            Assert.Contains(report.Notices, n => n.Message.Contains("Ячейка стоимости не разобрана как сумма"));
+            Assert.Contains(report.Notices, n => n.Message.Contains("Таблица не разобрана"));
+
+            var book = VesrParser.Parse(vesr);
+            Assert.True(book.ByCode.ContainsKey(TextMatch.CodeKey("4.10.1.1.1")));
+            Assert.Equal(1000m, book.ByCode[TextMatch.CodeKey("4.10.1.1.1")].TotalNet);
+            Assert.Null(book.ByCode[TextMatch.CodeKey("4.10.1.1.9")].TotalNet);
+
+            Assert.Equal(5, steps.Count);
+            Assert.Equal(5, steps[^1].Total);
+            Assert.Equal(5, steps[^1].Done);
+            Assert.Contains(steps, step => step.FileName == "vesr.xlsx");
+            Assert.Contains(steps, step => step.FileName == "пояснение_ИЗМ.pdf");
+
+            var reportPath = Path.Combine(dir.FullName, "report.xlsx");
+            ReportWriter.Write(report, reportPath, "0.1.0");
+            using var written = new XLWorkbook(reportPath);
+            var skips = written.Worksheet("Пропуски");
+            var messages = Enumerable.Range(5, skips.LastRowUsed()!.RowNumber() - 4)
+                .Select(row => skips.Cell(row, 3).GetString())
+                .ToList();
+            Assert.Equal(report.Notices.Count, messages.Count);
+            Assert.Contains(messages, message => message.Contains("Лист «ВЭ» не найден"));
+            Assert.Equal(40, messages.Count(message => message.Contains("Строка без кода элемента пропущена")));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Report_uses_segoe_thick_blocks_and_frozen_identity_columns()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-layout");
+        try
+        {
+            var verd = Path.Combine(dir.FullName, "verd.xlsx");
+            var vesr = Path.Combine(dir.FullName, "vesr.xlsx");
+            var act = Path.Combine(dir.FullName, "РД 4.10.docx");
+            WritePlainVerd(verd);
+            WritePlainVesr(vesr);
+            WritePlainAct(act);
+
+            var report = new CheckingEngine().Run(new CheckInput
+            {
+                VerdPath = verd,
+                VesrPath = vesr,
+                ActPaths = [act],
+            });
+            var reportPath = Path.Combine(dir.FullName, "report.xlsx");
+            ReportWriter.Write(report, reportPath, "0.1.0");
+
+            using var book = new XLWorkbook(reportPath);
+            Assert.Equal(SeverityPalette.FontName, book.Style.Font.FontName);
+            foreach (var sheet in book.Worksheets)
+                Assert.Equal(SeverityPalette.FontName, sheet.Style.Font.FontName);
+
+            var summary = book.Worksheet("Сводка");
+            Assert.Equal("Элемент", summary.Cell(5, 1).GetString());
+            Assert.Equal(XLBorderStyleValues.Thick, summary.Cell(5, 1).Style.Border.TopBorder);
+
+            var kits = book.Worksheet("Комплекты");
+            Assert.Equal("1. Шифр", kits.Cell(4, 4).GetString());
+            Assert.Equal("Элемент", kits.Cell(5, 1).GetString());
+            Assert.Equal("Акт", kits.Cell(5, 2).GetString());
+            Assert.Equal(5, kits.SheetView.SplitRow);
+            Assert.Equal(2, kits.SheetView.SplitColumn);
+            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 1).Style.Border.LeftBorder);
+            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 1).Style.Border.TopBorder);
+            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 4).Style.Border.LeftBorder);
+            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 7).Style.Border.RightBorder);
+            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 21).Style.Border.RightBorder);
+
+            var dataRow = 6;
+            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(dataRow, 4).Style.Border.LeftBorder);
+            if (kits.Cell(dataRow, 3).DataType == XLDataType.Number)
+                Assert.Equal("0,00", kits.Cell(dataRow, 3).Style.NumberFormat.Format);
+
+            var findings = book.Worksheet("Замечания");
+            Assert.Equal("Элемент", findings.Cell(4, 2).GetString());
+            Assert.Equal(XLBorderStyleValues.Thick, findings.Cell(4, 1).Style.Border.TopBorder);
+
+            var cipherStatus = kits.Cell(dataRow, 7);
+            Assert.Equal("ОК", cipherStatus.GetString());
+            Assert.Equal(SeverityPalette.Ok, Html(cipherStatus.Style.Fill.BackgroundColor));
+            var overall = kits.Cell(dataRow, 21);
+            Assert.Equal(SeverityPalette.For(SeverityFromRu(overall.GetString())), Html(overall.Style.Fill.BackgroundColor));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    private static string Html(XLColor color)
+    {
+        var rgb = color.Color;
+        return $"#{rgb.R:X2}{rgb.G:X2}{rgb.B:X2}";
+    }
+
+    private static Severity SeverityFromRu(string text) => text switch
+    {
+        "Критично" => Severity.Critical,
+        "Оформление" => Severity.Formatting,
+        "Предупреждение" => Severity.Warning,
+        "ОК" => Severity.Ok,
+        _ => throw new InvalidOperationException(text),
+    };
+
+    [Fact]
+    public void Frozen_pane_is_stored_in_the_worksheet_xml()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-freeze");
+        try
+        {
+            var reportPath = Path.Combine(dir.FullName, "report.xlsx");
+            ReportWriter.Write(new CheckReport(), reportPath, "0.1.0");
+            using var zip = ZipFile.OpenRead(reportPath);
+            var xml = zip.Entries
+                .Where(entry => entry.FullName.StartsWith("xl/worksheets/sheet", StringComparison.Ordinal))
+                .Select(entry =>
+                {
+                    using var stream = entry.Open();
+                    using var reader = new StreamReader(stream);
+                    return reader.ReadToEnd();
+                })
+                .ToList();
+            Assert.Contains(xml, text =>
+                text.Contains("xSplit=\"2\"", StringComparison.Ordinal)
+                && text.Contains("ySplit=\"5\"", StringComparison.Ordinal)
+                && text.Contains("state=\"frozenSplit\"", StringComparison.Ordinal));
+            using var styles = zip.GetEntry("xl/styles.xml")!.Open();
+            using var reader = new StreamReader(styles);
+            var stylesXml = reader.ReadToEnd();
+            var fontsAt = stylesXml.IndexOf("<fonts", StringComparison.Ordinal);
+            var fonts = fontsAt < 0 ? stylesXml[..800] : stylesXml.Substring(fontsAt, Math.Min(1800, stylesXml.Length - fontsAt));
+            Assert.True(stylesXml.Contains("Segoe UI", StringComparison.Ordinal) && !stylesXml.Contains("Calibri", StringComparison.Ordinal), fonts);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Status_names_match_the_shared_palette()
+    {
+        Assert.Equal("ОК", SeverityText.ToRu(Severity.Ok));
+        Assert.Equal("Оформление", SeverityText.ToRu(Severity.Formatting));
+        Assert.Equal("Предупреждение", SeverityText.ToRu(Severity.Warning));
+        Assert.Equal("Критично", SeverityText.ToRu(Severity.Critical));
+        Assert.Equal("#F4C7C3", SeverityPalette.For(Severity.Critical));
+        Assert.Equal("#FFE08A", SeverityPalette.For(Severity.Formatting));
+        Assert.Equal("#F8CBAD", SeverityPalette.For(Severity.Warning));
+        Assert.Equal("#C6EFCE", SeverityPalette.For(Severity.Ok));
+        Assert.Equal("Segoe UI", SeverityPalette.FontName);
+    }
+
+    private static string Nest(string root, string fileName)
+    {
+        var current = root;
+        var path = Path.Combine(current, fileName);
+        while (path.Length <= 270)
+        {
+            current = Path.Combine(current, "папка_" + new string('б', 24));
+            Directory.CreateDirectory(current);
+            path = Path.Combine(current, fileName);
+        }
+
+        return path;
+    }
+
+    private static void WriteNoisyVesr(string path, int extraSkipped)
+    {
+        using var book = new XLWorkbook();
+        var sheet = book.AddWorksheet("Данные");
+        sheet.Cell(1, 1).Value = "№ Элемента";
+        sheet.Cell(1, 2).Value = "Наименование";
+        sheet.Cell(1, 3).Value = "Единица измерения";
+        sheet.Cell(1, 4).Value = "Количество";
+        sheet.Cell(1, 5).Value = "на единицу";
+        sheet.Cell(1, 6).Value = "Всего";
+        sheet.Cell(2, 1).Value = "1";
+        sheet.Cell(2, 2).Value = "2";
+        sheet.Cell(3, 1).Value = "4.10.1.1.1";
+        sheet.Cell(3, 2).Value = "Рабочая документация. Сооружения";
+        sheet.Cell(3, 6).Value = 1000m;
+        sheet.Cell(4, 1).Value = "4.10.1.1.1";
+        sheet.Cell(4, 2).Value = "повтор";
+        sheet.Cell(4, 6).Value = 5m;
+        sheet.Cell(5, 1).Value = "4.10.1.1.9";
+        sheet.Cell(5, 2).Value = "кривая сумма";
+        sheet.Cell(5, 6).Value = "нечисло";
+        for (var i = 0; i < extraSkipped; i++)
+        {
+            sheet.Cell(6 + i, 1).Value = "примечание " + i;
+            sheet.Cell(6 + i, 2).Value = "строка";
+        }
+
+        book.SaveAs(path);
+    }
+
+    private static void WriteBrokenAct(string path)
+    {
+        using var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
+        var main = doc.AddMainDocumentPart();
+        main.Document = new Document(new Body(
+            new Paragraph(new Run(new Text("АКТ № 4.10"))),
+            Table(["Служебное", "Поле"], [["да", "нет"]]),
+            Table(
+                ["Наименование", "Стоимость без НДС", "НДС", "Стоимость с НДС"],
+                [["4.10.1.1.1 Рабочая документация. Сооружения", "криво", "220,00", "1 220,00"]])));
+        main.Document.Save();
+    }
+
+    private static void WritePlainVerd(string path)
+    {
+        using var book = new XLWorkbook();
+        var sheet = book.AddWorksheet("База");
+        sheet.Cell(1, 1).Value = "Номер элемента";
+        sheet.Cell(1, 2).Value = "Наименование элемента";
+        sheet.Cell(1, 4).Value = "Шифр РД";
+        sheet.Cell(1, 5).Value = "Наименование документации";
+        sheet.Cell(1, 7).Value = "№ Элемента по ДГП";
+        sheet.Cell(2, 1).Value = "4.10";
+        sheet.Cell(2, 2).Value = "Сооружения";
+        sheet.Cell(2, 4).Value = "100-20-3000-А-КМ1";
+        sheet.Cell(2, 5).Value = "Конструкции";
+        sheet.Cell(2, 7).Value = "4.10.1.1.1";
+        book.SaveAs(path);
+    }
+
+    private static void WritePlainVesr(string path)
+    {
+        using var book = new XLWorkbook();
+        var sheet = book.AddWorksheet("ВЭ");
+        sheet.Cell(1, 1).Value = "№ Элемента";
+        sheet.Cell(1, 2).Value = "Наименование";
+        sheet.Cell(1, 5).Value = "на единицу";
+        sheet.Cell(1, 6).Value = "Всего";
+        sheet.Cell(2, 1).Value = "4.10.1.1.1";
+        sheet.Cell(2, 2).Value = "Рабочая документация. Сооружения";
+        sheet.Cell(2, 5).Value = 1000m;
+        sheet.Cell(2, 6).Value = 1000m;
+        book.SaveAs(path);
+    }
+
+    private static void WritePlainAct(string path)
+    {
+        using var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
+        var main = doc.AddMainDocumentPart();
+        main.Document = new Document(new Body(
+            new Paragraph(new Run(new Text("АКТ № 4.10"))),
+            new Paragraph(new Run(new Text("Приложение к акту сдачи-приёмки рабочей документации № 4.10. Расчет погашенной части аванса в размере 10 (десять) рублей 50 копеек без учета НДС."))),
+            Table(
+                ["№ тома", "Шифр", "Наименование документа"],
+                [["4.10.1.1.1 (4.10)", "100-20-3000-А-КМ1", "Конструкции"]]),
+            Table(
+                ["Наименование", "Стоимость без НДС", "НДС", "Стоимость с НДС"],
+                [["4.10.1.1.1 Рабочая документация. Сооружения", "1000", "220", "1220"]])));
+        main.Document.Save();
+    }
+
+    private static Table Table(string[] headers, string[][] rows)
+    {
+        var table = new Table();
+        table.Append(Row(headers));
+        foreach (var row in rows)
+            table.Append(Row(row));
+        return table;
+    }
+
+    private static TableRow Row(IEnumerable<string> cells)
+    {
+        var row = new TableRow();
+        foreach (var cell in cells)
+            row.Append(new TableCell(new Paragraph(new Run(new Text(cell) { Space = SpaceProcessingModeValues.Preserve }))));
+        return row;
+    }
+
+    private sealed class SyncProgress(List<CheckProgress> steps) : IProgress<CheckProgress>
+    {
+        public void Report(CheckProgress value) => steps.Add(value);
+    }
+}
