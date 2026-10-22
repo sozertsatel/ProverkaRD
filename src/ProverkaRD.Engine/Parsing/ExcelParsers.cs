@@ -11,7 +11,8 @@ public static partial class VerdParser
         var book = new VerdBook();
         try
         {
-            using var wb = new XLWorkbook(path);
+            using var stream = SharedRead.Stream(path);
+            using var wb = new XLWorkbook(stream);
             var sheet = wb.Worksheets.FirstOrDefault(w =>
                             w.Name.Contains("База", StringComparison.OrdinalIgnoreCase))
                         ?? wb.Worksheets.First();
@@ -27,7 +28,7 @@ public static partial class VerdParser
             var last = sheet.LastRowUsed()?.RowNumber() ?? row;
             for (var r = row + 1; r <= last; r++)
             {
-                var number = Text(sheet, r, cols.Number);
+                var number = ElementNumber(sheet, r, cols.Number);
                 var name = Text(sheet, r, cols.Name);
                 var cipher = Text(sheet, r, cols.Cipher);
                 var kitName = Text(sheet, r, cols.KitName);
@@ -110,6 +111,20 @@ public static partial class VerdParser
         return null;
     }
 
+    private static string ElementNumber(IXLWorksheet sheet, int row, int col)
+    {
+        if (col <= 0)
+            return "";
+        var cell = sheet.Cell(row, col);
+        if (cell.IsEmpty())
+            return "";
+        if (cell.DataType == XLDataType.Number)
+            return cell.GetDouble().ToString("0.##", CultureInfo.InvariantCulture);
+
+        var text = Text(sheet, row, col);
+        return CommaElement().IsMatch(text) ? text.Replace(',', '.') : text;
+    }
+
     private static string Text(IXLWorksheet sheet, int row, int col)
     {
         if (col <= 0)
@@ -128,6 +143,9 @@ public static partial class VerdParser
     [GeneratedRegex(@"^\d+\.\d+$")]
     private static partial Regex ElementNo();
 
+    [GeneratedRegex(@"^\d+,\d+$")]
+    private static partial Regex CommaElement();
+
     [GeneratedRegex(@"^\d+$")]
     private static partial Regex IndexRow();
 
@@ -142,7 +160,8 @@ public static partial class VesrParser
         var book = new VesrBook();
         try
         {
-            using var wb = new XLWorkbook(path);
+            using var stream = SharedRead.Stream(path);
+            using var wb = new XLWorkbook(stream);
             var sheet = wb.Worksheets.FirstOrDefault(w =>
                             w.Name.Trim().StartsWith("ВЭ", StringComparison.OrdinalIgnoreCase))
                         ?? wb.Worksheets.First();

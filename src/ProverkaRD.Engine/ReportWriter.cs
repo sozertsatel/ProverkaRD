@@ -166,7 +166,15 @@ public static class ReportWriter
         foreach (var wide in new[] { 6, 8, 9, 10, 12, 13, 14, 18, 19 })
             sheet.Column(wide).Width = 36;
         if (row > headerRow + 1)
+        {
             sheet.Rows(headerRow + 1, row - 1).Style.Alignment.WrapText = true;
+            for (var r = headerRow + 1; r < row; r++)
+            {
+                var advance = sheet.Cell(r, 3);
+                if (advance.DataType == XLDataType.Number)
+                    advance.Style.NumberFormat.Format = "0,00";
+            }
+        }
     }
 
     private static void WriteFindings(XLWorkbook workbook, CheckReport report, string? appVersion)
@@ -281,7 +289,7 @@ public static class ReportWriter
         }
 
         cell.Value = value.Value;
-        cell.Style.NumberFormat.Format = "0.00";
+        cell.Style.NumberFormat.Format = "0,00";
     }
 
     private static void WriteCompared(IXLCell cell, string text, IReadOnlyList<string> peers)

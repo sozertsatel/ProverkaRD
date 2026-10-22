@@ -231,6 +231,109 @@ public class EngineRulesTests
     }
 
     [Fact]
+    public void Verd_register_keeps_kits_under_the_element_and_opens_while_the_file_is_busy()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-verd");
+        var path = Path.Combine(dir.FullName, "verd.xlsx");
+        try
+        {
+            using (var book = new XLWorkbook())
+            {
+                var report = book.AddWorksheet("Отчет");
+                report.Cell(1, 2).Value = "ОТЧЕТ";
+                var sheet = book.AddWorksheet("База");
+                sheet.Cell(2, 9).Value = "Служебная пометка";
+                sheet.Cell(3, 1).Value = "Номер элемента";
+                sheet.Cell(3, 2).Value = "Наименование элемента";
+                sheet.Cell(3, 3).Value = "Шифр ПД";
+                sheet.Cell(3, 4).Value = "Шифр РД";
+                sheet.Cell(3, 5).Value = "Наименование документации";
+                sheet.Cell(3, 7).Value = "№ Элемента по ДГП";
+                sheet.Cell(4, 1).Value = "1";
+                sheet.Cell(4, 2).Value = "2";
+                sheet.Cell(4, 4).Value = "4";
+                sheet.Cell(5, 1).Value = "4.10";
+                sheet.Cell(5, 2).Value = "Сооружения синтетические";
+                sheet.Cell(5, 4).Value = "100-20-3000-А-КЖ1";
+                sheet.Cell(5, 5).Value = "Опоры. Конструкции";
+                sheet.Cell(5, 7).Value = "4.10.1";
+                sheet.Cell(6, 4).Value = "100-20-3000-А-КЖ2";
+                sheet.Cell(6, 5).Value = "Опоры";
+                sheet.Cell(7, 1).Value = "4,20";
+                sheet.Cell(7, 2).Value = "Второй элемент";
+                sheet.Cell(7, 4).Value = "100-20-3000-А-КЖ3";
+                sheet.Cell(7, 5).Value = "Продолжение после шифра";
+                sheet.Cell(8, 1).Value = 4.3;
+                sheet.Cell(8, 2).Value = "Числовой номер";
+                sheet.Cell(8, 4).Value = "100-20-3000-А-КЖ4";
+                sheet.Cell(8, 5).Value = "Число";
+                book.SaveAs(path);
+            }
+
+            using var hold = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+            var verd = VerdParser.Parse(path);
+            Assert.Empty(verd.Errors);
+            Assert.Equal(3, verd.Elements.Count);
+            Assert.Equal("4.10", verd.Elements[0].Number);
+            Assert.Equal(2, verd.Elements[0].Kits.Count);
+            Assert.Equal("100-20-3000-А-КЖ2", verd.Elements[0].Kits[1].Cipher);
+            Assert.Equal("4.20", verd.Elements[1].Number);
+            Assert.Equal("4.3", verd.Elements[2].Number);
+            Assert.Equal("Продолжение после шифра", verd.Elements[1].Kits[0].Name);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Title_line_after_the_cipher_is_part_of_the_name_and_a_cut_name_is_critical()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-title");
+        var path = Path.Combine(dir.FullName, "100-20-3000-А-КЖ1.docx");
+        try
+        {
+            using (var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document))
+            {
+                var main = doc.AddMainDocumentPart();
+                main.Document = new Document(new Body(
+                    new Paragraph(new Run(new Text("РАБОЧАЯ ДОКУМЕНТАЦИЯ"))),
+                    new Paragraph(new Run(new Text("Мост. Опоры."))),
+                    new Paragraph(new Run(new Text("100-20-3000-А-КЖ1"))),
+                    new Paragraph(new Run(new Text("Конструкции железобетонные"))),
+                    new Paragraph(new Run(new Text("Разраб. Петрову А.Б."))),
+                    new Paragraph(new Run(new Text("Этап 4.10 Сооружения")))));
+                main.Document.Save();
+            }
+
+            var rd = RdParser.Parse(path);
+            Assert.Contains("Опоры", rd.KitName);
+            Assert.Contains("Конструкции железобетонные", rd.KitName);
+            Assert.Equal("4.10", rd.ElementNo);
+            Assert.Equal("Сооружения", rd.ElementName);
+            Assert.Equal(Severity.Critical, TextMatch.Compare("Мост. Опоры.", "Мост. Опоры. Конструкции железобетонные"));
+            Assert.Equal(Severity.Formatting, TextMatch.Compare("насыпью Конструкции", "насыпью. Конструкции"));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Stamp_line_with_a_chief_title_still_returns_the_surname()
+    {
+        var names = RdParser.CollectSurnames(
+        [
+            new RdParser.RdPage(2, "", "Начальник ТО Согласовано Иванов А.А."),
+            new RdParser.RdPage(8, "Чертёж\nБетон В25", "Инв. № подл."),
+        ]);
+        Assert.Contains(names, name => name.Contains("Иванов", StringComparison.Ordinal));
+        Assert.DoesNotContain(names, name => name.Contains("Бетон", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Surnames_come_from_titles_stamps_and_the_first_vor_sheet_only()
     {
         var pages = new[]
@@ -358,7 +461,8 @@ public class EngineRulesTests
             Assert.Equal("5. Подписи", kits.Cell(4, 18).GetString());
             Assert.Equal("Погашение аванса без НДС", kits.Cell(5, 3).GetString());
             Assert.Equal(168027.54m, kits.Cell(6, 3).GetValue<decimal>());
-            Assert.Equal("0.00", kits.Cell(6, 3).Style.NumberFormat.Format);
+            Assert.Equal(XLDataType.Number, kits.Cell(6, 3).DataType);
+            Assert.Equal("0,00", kits.Cell(6, 3).Style.NumberFormat.Format);
             var summary = book.Worksheet("Сводка");
             Assert.Equal("Критично", summary.Cell(6, 2).GetString());
             var findings = book.Worksheet("Замечания");

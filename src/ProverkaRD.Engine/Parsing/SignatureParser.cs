@@ -32,7 +32,7 @@ public static partial class SignatureParser
     {
         try
         {
-            var bytes = File.ReadAllBytes(path);
+            var bytes = SharedRead.Bytes(path);
             try
             {
                 return new SignatureRead(ReadSignedCms(bytes), null);
