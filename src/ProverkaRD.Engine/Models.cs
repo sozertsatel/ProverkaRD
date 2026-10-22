@@ -1,11 +1,33 @@
 namespace ProverkaRD.Engine;
 
+public sealed class CheckOptions
+{
+    public IReadOnlyList<string> IgnoredSigners { get; init; } = [];
+    public bool GroupSignerWarnings { get; init; } = true;
+    public bool GroupDuplicateFindings { get; init; } = true;
+}
+
 public sealed class CheckInput
 {
     public string? VerdPath { get; init; }
     public string? VesrPath { get; init; }
     public IReadOnlyList<string> ActPaths { get; init; } = [];
     public IReadOnlyList<string> RdPaths { get; init; } = [];
+    public CheckOptions Options { get; init; } = new();
+}
+
+public readonly record struct FindingPlace(string Act, string ElementNo, string Kit)
+{
+    public string Display
+    {
+        get
+        {
+            var parts = new[] { ElementNo, Act, Kit }
+                .Where(s => !string.IsNullOrWhiteSpace(s) && s != "—")
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            return string.Join(" / ", parts);
+        }
+    }
 }
 
 public sealed record Finding(
@@ -15,7 +37,20 @@ public sealed record Finding(
     string ValueA,
     string ValueB,
     Severity Severity,
-    string Explanation);
+    string Explanation,
+    string ElementNo = "",
+    string InAct = "",
+    string InRd = "",
+    string InVerd = "",
+    string InVesr = "",
+    IReadOnlyList<FindingPlace>? Locations = null)
+{
+    public IReadOnlyList<FindingPlace> Locations { get; init; } = Locations ?? [];
+
+    public string Places => Locations.Count == 0
+        ? ""
+        : string.Join("; ", Locations.Select(p => p.Display).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase));
+}
 
 public sealed class ActKit
 {
@@ -133,7 +168,10 @@ public sealed class ActResult
     public int VerdKitCount { get; init; }
     public string CompletenessText { get; init; } = "";
     public Severity CompletenessStatus { get; init; }
-    public Severity Overall { get; init; }
+    public Severity Overall { get; set; }
+    public int CriticalCount { get; set; }
+    public int FormattingCount { get; set; }
+    public int WarningCount { get; set; }
 }
 
 public sealed class KitResult
