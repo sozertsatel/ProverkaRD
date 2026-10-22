@@ -365,8 +365,8 @@ public class EngineRulesTests
     {
         var surnames = RdParser.CollectSurnames(
         [
-            new RdParser.RdPage(1, "Турникетно-кассовый павильон\nКотельная установка\nПлощадка Корецкого\nУзел Ларецкого\nпримечание Милина без инициалов\nРазраб. Милина А.А.\nДальская И.И.", "Н.контр. Тихих Т.Т."),
-            new RdParser.RdPage(2, "ГИП Котельная А.Б.", "Согласовано Ларецкий А.А.\nУтв. Лесной К.К."),
+            new RdParser.RdPage(1, "Турникетно-кассовый павильон\nКотельная установка\nПлощадка Моревского\nУзел Древецкого\nпримечание Милина без инициалов\nРазраб. Милина А.А.\nДальская И.И.", "Н.контр. Тихих Т.Т."),
+            new RdParser.RdPage(2, "ГИП Котельная А.Б.", "Начальник ТО\nСогласовано Моревский А.А.\nУтв. Древецкий Д.Д."),
             new RdParser.RdPage(3, "Чертёж", "Утв. Новина Н.Н."),
             new RdParser.RdPage(4, "Ведомость объемов работ\nИсп. Фролов Я.Я.", ""),
             new RdParser.RdPage(5, "Согласовано Белов А.А.", "Светина А.А."),
@@ -376,13 +376,52 @@ public class EngineRulesTests
         Assert.Contains(surnames, s => s.Contains("Тихих", StringComparison.Ordinal));
         Assert.Contains(surnames, s => s.Contains("Новина", StringComparison.Ordinal));
         Assert.Contains(surnames, s => s.Contains("Фролов", StringComparison.Ordinal));
+        Assert.Contains(surnames, s => s.Contains("Моревский", StringComparison.Ordinal));
+        Assert.Contains(surnames, s => s.Contains("Древецкий", StringComparison.Ordinal));
         Assert.DoesNotContain(surnames, s => s.Contains("Турникетно", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(surnames, s => s.Contains("кассовый", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(surnames, s => s.Contains("Котельная", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(surnames, s => s.Contains("Корецк", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(surnames, s => s.Contains("Ларецкий", StringComparison.Ordinal));
         Assert.DoesNotContain(surnames, s => s.Contains("Белов", StringComparison.Ordinal));
         Assert.DoesNotContain(surnames, s => s.Contains("Светина", StringComparison.Ordinal));
+
+        var bare = RdParser.CollectSurnames(
+        [
+            new RdParser.RdPage(1, "Площадка Моревского\nУзел Древецкого\nРазраб. Милина А.А.", ""),
+        ]);
+        Assert.Contains(bare, s => s.Contains("Милина", StringComparison.Ordinal));
+        Assert.DoesNotContain(bare, s => s.Contains("Моревский", StringComparison.Ordinal));
+        Assert.DoesNotContain(bare, s => s.Contains("Древецкий", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Stamp_surname_glued_to_the_first_initial_is_kept()
+    {
+        var surnames = RdParser.CollectSurnames(
+        [
+            new RdParser.RdPage(1, "Турникетно-кассовый павильон\nПлощадка Моревского", ""),
+            new RdParser.RdPage(
+                3,
+                "Чертёж\nРазработал Петров П.П.",
+                "ГИП\tИвановаМ\t.В.\nН. контр.\tПетровихС\t.В.\nРазработал\nВолковА\t.Б.\nОрловаК\t.В.\nСеверовД . В.\nЛесниковП.\t.Р.\nДальскаяН\t.И.\nКотельнаяА\t.Б.",
+                "Н. контр.\tСветлинаА\t.В."),
+            new RdParser.RdPage(4, "Ведомость объемов работ", "Утв. Фролов Я.Я."),
+            new RdParser.RdPage(5, "Письмо\nСогласовано Белов А.А.", "СветинаА\t.Б."),
+        ]);
+        Assert.Contains(surnames, s => s == "Иванова");
+        Assert.Contains(surnames, s => s == "Петрових");
+        Assert.Contains(surnames, s => s == "Волков");
+        Assert.Contains(surnames, s => s == "Орлова");
+        Assert.Contains(surnames, s => s == "Северов");
+        Assert.Contains(surnames, s => s == "Лесников");
+        Assert.Contains(surnames, s => s == "Дальская");
+        Assert.Contains(surnames, s => s == "Светлина");
+        Assert.Contains(surnames, s => s.Contains("Фролов", StringComparison.Ordinal));
+        Assert.DoesNotContain(surnames, s => s.Contains('М') && s.StartsWith("Иванова", StringComparison.Ordinal) && s.Length > "Иванова".Length);
+        Assert.DoesNotContain(surnames, s => s.Equals("Петров", StringComparison.Ordinal));
+        Assert.DoesNotContain(surnames, s => s.Contains("Турникетно", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Котельная", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Светина", StringComparison.Ordinal));
+        Assert.DoesNotContain(surnames, s => s.Contains("Белов", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -523,6 +562,24 @@ public class EngineRulesTests
             SourceBlame.InAct + "; " + SourceBlame.InRd,
             SourceBlame.Of(typo, typo, correct));
         Assert.DoesNotContain(SourceBlame.InRd, SourceBlame.Of(typo, correct, typo));
+    }
+
+    [Fact]
+    public void Missing_picket_mark_blames_every_source_without_it()
+    {
+        const string without = "Водопропускная труба на 04+60,00";
+        const string withMark = "Водопропускная труба на ПК04+60,00";
+        Assert.Equal(Severity.Critical, TextMatch.Compare(without, withMark));
+        Assert.Equal(
+            SourceBlame.InAct + "; " + SourceBlame.InVerd,
+            SourceBlame.Of(without, withMark, without));
+        Assert.Equal(SourceBlame.InRd, SourceBlame.Of(withMark, "Водопропускная труба на 04+60.00", "Водопропускная труба на ПК 04+60,00"));
+        Assert.Equal(
+            SourceBlame.InRd + "; " + SourceBlame.InVerd,
+            SourceBlame.Of(withMark, without, "Водопропускная труба на 04+60,00"));
+        Assert.Equal(SourceBlame.InRd, SourceBlame.Of(without, "мост на ПК04+60,00", without));
+        Assert.Equal("", SourceBlame.Of("Альфа", "Бета", "Гамма"));
+        Assert.Equal(SourceBlame.InAct, SourceBlame.Of("Другие сооружения", "Опоры.", "Опоры"));
     }
 
     [Fact]
