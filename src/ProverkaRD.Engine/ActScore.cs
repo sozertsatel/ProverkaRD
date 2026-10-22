@@ -43,25 +43,59 @@ public static class ActScore
 
     public static bool Concerns(ActResult act, Finding finding)
     {
-        if (Hit(act, finding.Act, finding.ElementNo))
+        if (Hit(act, finding.Act, finding.ElementNo, finding.ActPath))
             return true;
-        return finding.Locations.Any(place => Hit(act, place.Act, place.ElementNo));
+        return finding.Locations.Any(place => Hit(act, place.Act, place.ElementNo, place.ActPath));
     }
 
     public static bool Concerns(ActResult act, KitResult kit) =>
-        Hit(act, kit.ActName, kit.ElementNo);
+        Hit(act, kit.ActName, kit.ElementNo, kit.SourcePath);
 
-    private static bool Hit(ActResult act, string? actName, string? elementNo)
+    public static bool Concerns(ActResult act, string? actPath) =>
+        !string.IsNullOrWhiteSpace(act.SourcePath)
+        && !string.IsNullOrWhiteSpace(actPath)
+        && string.Equals(act.SourcePath, actPath, StringComparison.OrdinalIgnoreCase);
+
+    private static bool Hit(ActResult act, string? actName, string? elementNo) =>
+        Hit(act, actName, elementNo, "");
+
+    private static bool Hit(ActResult act, string? actName, string? elementNo, string? actPath)
     {
-        if (!string.IsNullOrWhiteSpace(actName)
-            && actName != "—"
-            && string.Equals(actName, act.FileName, StringComparison.OrdinalIgnoreCase))
+        if (Concerns(act, actPath))
             return true;
-        if (string.IsNullOrWhiteSpace(elementNo) || string.IsNullOrWhiteSpace(act.ElementNo))
+        if (SameActName(act.FileName, actName))
+            return true;
+        return SameElement(act.ElementNo, elementNo);
+    }
+
+    private static bool SameActName(string? left, string? right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right) || right == "—")
             return false;
-        foreach (var part in elementNo.Split([',', ';'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        var a = OfficeName(left);
+        var b = OfficeName(right);
+        return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string OfficeName(string value)
+    {
+        var name = value.Trim();
+        foreach (var extension in new[] { ".docx", ".doc", ".pdf", ".xlsx", ".xlsm" })
         {
-            if (string.Equals(TextMatch.CodeKey(part), TextMatch.CodeKey(act.ElementNo), StringComparison.Ordinal))
+            if (name.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+                return name[..^extension.Length];
+        }
+        return name;
+    }
+
+    private static bool SameElement(string? actElement, string? other)
+    {
+        var left = TextMatch.CodeKey(actElement);
+        if (left.Length == 0 || string.IsNullOrWhiteSpace(other))
+            return false;
+        foreach (var part in other.Split([',', ';'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (string.Equals(TextMatch.CodeKey(part), left, StringComparison.Ordinal))
                 return true;
         }
         return false;

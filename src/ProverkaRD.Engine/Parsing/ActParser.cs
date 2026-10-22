@@ -14,6 +14,7 @@ public static partial class ActParser
         var kits = new List<ActKit>();
         var costs = new List<ActCostLine>();
         string? headingNo = null;
+        decimal? advance = null;
 
         try
         {
@@ -21,6 +22,8 @@ public static partial class ActParser
             var body = doc.MainDocumentPart?.Document?.Body
                 ?? throw new InvalidDataException("В документе нет тела.");
 
+            var prose = string.Join("\n", body.Descendants<Paragraph>().Select(ParagraphText));
+            advance = AdvancePayment.Parse(prose);
             var paragraphs = body.Elements<Paragraph>().Select(ParagraphText).ToList();
             foreach (var paragraph in paragraphs)
             {
@@ -62,6 +65,7 @@ public static partial class ActParser
             ElementNoFromHeading = headingNo,
             Kits = kits,
             CostLines = costs,
+            AdvanceNet = advance,
             Errors = errors,
         };
     }

@@ -16,16 +16,15 @@ public sealed class CheckInput
     public CheckOptions Options { get; init; } = new();
 }
 
-public readonly record struct FindingPlace(string Act, string ElementNo, string Kit)
+public readonly record struct FindingPlace(string Act, string ElementNo, string Kit, string ActPath = "")
 {
     public string Display
     {
         get
         {
-            var parts = new[] { ElementNo, Act, Kit }
-                .Where(s => !string.IsNullOrWhiteSpace(s) && s != "—")
-                .Distinct(StringComparer.OrdinalIgnoreCase);
-            return string.Join(" / ", parts);
+            if (!string.IsNullOrWhiteSpace(Kit) && Kit != "—")
+                return Kit;
+            return "";
         }
     }
 }
@@ -43,13 +42,17 @@ public sealed record Finding(
     string InRd = "",
     string InVerd = "",
     string InVesr = "",
+    string ActPath = "",
     IReadOnlyList<FindingPlace>? Locations = null)
 {
     public IReadOnlyList<FindingPlace> Locations { get; init; } = Locations ?? [];
 
     public string Places => Locations.Count == 0
-        ? ""
-        : string.Join("; ", Locations.Select(p => p.Display).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase));
+        ? (string.IsNullOrWhiteSpace(Kit) || Kit == "—" ? "" : Kit)
+        : string.Join(", ", Locations
+            .Select(p => p.Kit)
+            .Where(s => !string.IsNullOrWhiteSpace(s) && s != "—")
+            .Distinct(StringComparer.OrdinalIgnoreCase));
 }
 
 public sealed class ActKit
@@ -85,6 +88,7 @@ public sealed class ActDocument
     public string? ElementNoFromHeading { get; init; }
     public IReadOnlyList<ActKit> Kits { get; init; } = [];
     public IReadOnlyList<ActCostLine> CostLines { get; init; } = [];
+    public decimal? AdvanceNet { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = [];
 }
 
@@ -146,7 +150,9 @@ public sealed class RdDocument
 public sealed class ActResult
 {
     public string FileName { get; init; } = "";
+    public string SourcePath { get; init; } = "";
     public string ElementNo { get; init; } = "";
+    public decimal? AdvanceNet { get; init; }
     public string ActElementName { get; init; } = "";
     public string VerdElementName { get; init; } = "";
     public Severity NameStatus { get; init; }
@@ -178,7 +184,15 @@ public sealed class KitResult
 {
     public string ElementNo { get; init; } = "";
     public string ActName { get; init; } = "";
+    public string ActNo { get; init; } = "";
+    public string SourcePath { get; init; } = "";
+    public decimal? AdvanceNet { get; init; }
+    public bool AdvanceKnown { get; init; }
     public string Cipher { get; init; } = "";
+    public string ActCipher { get; init; } = "";
+    public string VerdCipher { get; init; } = "";
+    public string TitleCipher { get; init; } = "";
+    public Severity CipherStatus { get; init; }
     public string DgpCode { get; init; } = "";
     public string ActKitName { get; init; } = "";
     public string VerdKitName { get; init; } = "";
@@ -189,10 +203,16 @@ public sealed class KitResult
     public string RdCipher { get; init; } = "";
     public string RdKitName { get; init; } = "";
     public Severity RdNameStatus { get; init; }
+    public string ActElementName { get; init; } = "";
+    public string VerdElementName { get; init; } = "";
     public string RdElementNo { get; init; } = "";
     public string RdElementName { get; init; } = "";
     public Severity RdElementStatus { get; init; }
+    public Severity ElementNameStatus { get; init; }
+    public string PdfState { get; init; } = "";
+    public string SigState { get; init; } = "";
     public string Surnames { get; init; } = "";
+    public string MissingSigners { get; init; } = "";
     public string Signers { get; init; } = "";
     public Severity SurnameStatus { get; init; }
     public string Presence { get; init; } = "";

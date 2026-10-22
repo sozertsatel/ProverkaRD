@@ -8,6 +8,7 @@ sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        AppUpdate.DeleteBackup();
         if (args.Any(a => a is "--check" or "--help" or "-h"))
         {
             Environment.ExitCode = Headless.Run(args);
