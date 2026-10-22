@@ -1,0 +1,189 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:ProverkaRD"
+        x:Class="ProverkaRD.MainWindow"
+        x:CompileBindings="False"
+        Title="Проверка РД 0.0.1"
+        Width="1320" Height="880"
+        MinWidth="980" MinHeight="680"
+        Background="#F3F5F8">
+    <Window.Resources>
+        <local:SeverityTextConverter x:Key="SevText"/>
+        <local:SeverityBrushConverter x:Key="SevBrush"/>
+    </Window.Resources>
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#1F4E79" Padding="22,16">
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                <StackPanel Spacing="4">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Text="Проверка РД" FontSize="28" FontWeight="Bold" Foreground="White"/>
+                        <TextBlock x:Name="VersionText" Text="0.0.1" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+                    </StackPanel>
+                    <TextBlock Foreground="#D6E3F0" TextWrapping="Wrap" MaxWidth="760"
+                               Text="Сверка акта сдачи-приёмки, ведомостей ВЭРД и ВЭСР и комплекта рабочей документации по одному элементу этапа."/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button Classes="primary" Content="Проверить" Click="OnCheck" IsEnabled="{Binding CanRun}"/>
+                    <Button Content="Выгрузить отчёт (Excel)" Click="OnExport" IsEnabled="{Binding CanExport}"/>
+                    <Button Content="Проверить обновления" Click="OnCheckUpdates"/>
+                </StackPanel>
+                <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" IsIndeterminate="True" IsVisible="{Binding Busy}" Height="3" Margin="0,10,0,0"/>
+            </Grid>
+        </Border>
+
+        <Border DockPanel.Dock="Top" Background="White" Padding="18,12" BorderBrush="#E2E7EE" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="24">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button Content="Загрузить ВЭРД" Click="OnLoadVerd" IsEnabled="{Binding CanRun}"/>
+                    <TextBlock Text="{Binding VerdCaption}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="420"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                    <Button Content="Загрузить ВЭСР" Click="OnLoadVesr" IsEnabled="{Binding CanRun}"/>
+                    <TextBlock Text="{Binding VesrCaption}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="420"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="#E2E7EE" BorderThickness="0,1,0,0" Padding="18,10">
+            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap"/>
+        </Border>
+
+        <Grid Margin="16" RowDefinitions="Auto,*">
+            <Grid ColumnDefinitions="*,12,*" ColumnSpacing="0">
+                <Border Background="White" CornerRadius="10" Padding="12" BorderBrush="#E2E7EE" BorderThickness="1"
+                        DragDrop.AllowDrop="True" DragDrop.Drop="OnRdDrop">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Top" Spacing="8">
+                            <TextBlock Text="Комплекты РД" FontWeight="SemiBold" FontSize="16"/>
+                            <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
+                                       Text="PDF и DOCX. Подпись .sig подхватывается рядом с файлом и в список отдельно не попадает."/>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button Classes="quiet" Content="Файлы" Click="OnAddRdFiles" IsEnabled="{Binding CanRun}"/>
+                                <Button Classes="quiet" Content="Папка" Click="OnAddRdFolder" IsEnabled="{Binding CanRun}"/>
+                                <Button Classes="quiet" Content="Удалить" Click="OnRemoveRd" IsEnabled="{Binding CanRun}"/>
+                                <Button Classes="quiet" Content="Очистить" Click="OnClearRd" IsEnabled="{Binding CanRun}"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <Panel Margin="0,8,0,0">
+                            <ListBox x:Name="RdList" ItemsSource="{Binding RdFiles}" MaxHeight="168" MinHeight="96">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock IsVisible="{Binding RdEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
+                                       Text="Перетащите сюда комплекты или выберите файлы и папку."/>
+                        </Panel>
+                    </DockPanel>
+                </Border>
+
+                <Border Grid.Column="2" Background="White" CornerRadius="10" Padding="12" BorderBrush="#E2E7EE" BorderThickness="1"
+                        DragDrop.AllowDrop="True" DragDrop.Drop="OnActDrop">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Top" Spacing="8">
+                            <TextBlock Text="Акты сдачи-приёмки" FontWeight="SemiBold" FontSize="16"/>
+                            <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
+                                       Text="DOCX. Номер элемента читается из имени файла, строки «АКТ №» и скобок в «№ тома»."/>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button Classes="quiet" Content="Файлы" Click="OnAddActFiles" IsEnabled="{Binding CanRun}"/>
+                                <Button Classes="quiet" Content="Папка" Click="OnAddActFolder" IsEnabled="{Binding CanRun}"/>
+                                <Button Classes="quiet" Content="Удалить" Click="OnRemoveAct" IsEnabled="{Binding CanRun}"/>
+                                <Button Classes="quiet" Content="Очистить" Click="OnClearActs" IsEnabled="{Binding CanRun}"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <Panel Margin="0,8,0,0">
+                            <ListBox x:Name="ActList" ItemsSource="{Binding ActFiles}" MaxHeight="168" MinHeight="96">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock IsVisible="{Binding ActEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
+                                       Text="Перетащите сюда акты или выберите файлы и папку."/>
+                        </Panel>
+                    </DockPanel>
+                </Border>
+            </Grid>
+
+            <DockPanel Grid.Row="1" Margin="0,12,0,0">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="16" Margin="2,0,0,8">
+                    <TextBlock Text="{Binding SummaryText}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBox PlaceholderText="Фильтр по акту, шифру или тексту" Text="{Binding FilterText}" Width="320"/>
+                </StackPanel>
+                <TabControl>
+                    <TabItem Header="Акты">
+                        <DataGrid ItemsSource="{Binding FilteredActs}" IsReadOnly="True" CanUserSortColumns="True"
+                                  GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
+                                  AutoGenerateColumns="False">
+                            <DataGrid.Styles>
+                                <Style Selector="DataGridRow">
+                                    <Setter Property="Background" Value="{Binding Overall, Converter={StaticResource SevBrush}}"/>
+                                </Style>
+                            </DataGrid.Styles>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Итог" Binding="{Binding Overall, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTextColumn Header="Акт" Binding="{Binding FileName}" Width="280"/>
+                                <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="80"/>
+                                <DataGridTextColumn Header="Наименование" Binding="{Binding NameStatus, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTextColumn Header="Стоимость, имя" Binding="{Binding CostNameStatus, Converter={StaticResource SevText}}" Width="150"/>
+                                <DataGridTextColumn Header="Код ДГП" Binding="{Binding CodeStatus, Converter={StaticResource SevText}}" Width="150"/>
+                                <DataGridTextColumn Header="Без НДС, акт" Binding="{Binding ActNet, StringFormat={}{0:N2}}" Width="130"/>
+                                <DataGridTextColumn Header="Без НДС, ВЭСР" Binding="{Binding VesrNet, StringFormat={}{0:N2}}" Width="140"/>
+                                <DataGridTextColumn Header="Без НДС" Binding="{Binding NetStatus, Converter={StaticResource SevText}}" Width="140"/>
+                                <DataGridTextColumn Header="С НДС" Binding="{Binding GrossStatus, Converter={StaticResource SevText}}" Width="140"/>
+                                <DataGridTextColumn Header="Комплектность" Binding="{Binding CompletenessStatus, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTextColumn Header="Состав" Binding="{Binding CompletenessText}" Width="360"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </TabItem>
+                    <TabItem Header="Комплекты">
+                        <DataGrid ItemsSource="{Binding FilteredKits}" IsReadOnly="True" CanUserSortColumns="True"
+                                  GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
+                                  AutoGenerateColumns="False">
+                            <DataGrid.Styles>
+                                <Style Selector="DataGridRow">
+                                    <Setter Property="Background" Value="{Binding Overall, Converter={StaticResource SevBrush}}"/>
+                                </Style>
+                            </DataGrid.Styles>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Итог" Binding="{Binding Overall, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="80"/>
+                                <DataGridTextColumn Header="Шифр" Binding="{Binding Cipher}" Width="240"/>
+                                <DataGridTextColumn Header="Акт" Binding="{Binding ActName}" Width="220"/>
+                                <DataGridTextColumn Header="Наименование" Binding="{Binding NameStatus, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTextColumn Header="Файл" Binding="{Binding Presence}" Width="160"/>
+                                <DataGridTextColumn Header="Элемент РД" Binding="{Binding RdElementStatus, Converter={StaticResource SevText}}" Width="140"/>
+                                <DataGridTextColumn Header="Фамилии" Binding="{Binding SurnameStatus, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTextColumn Header="В документе" Binding="{Binding Surnames}" Width="280"/>
+                                <DataGridTextColumn Header="Подписанты" Binding="{Binding Signers}" Width="280"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </TabItem>
+                    <TabItem Header="Замечания">
+                        <DataGrid ItemsSource="{Binding FilteredFindings}" IsReadOnly="True" CanUserSortColumns="True"
+                                  GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
+                                  AutoGenerateColumns="False">
+                            <DataGrid.Styles>
+                                <Style Selector="DataGridRow">
+                                    <Setter Property="Background" Value="{Binding Severity, Converter={StaticResource SevBrush}}"/>
+                                </Style>
+                            </DataGrid.Styles>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Критичность" Binding="{Binding Severity, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTextColumn Header="Акт" Binding="{Binding Act}" Width="240"/>
+                                <DataGridTextColumn Header="Комплект" Binding="{Binding Kit}" Width="220"/>
+                                <DataGridTextColumn Header="Что проверялось" Binding="{Binding CheckName}" Width="260"/>
+                                <DataGridTextColumn Header="Значение A" Binding="{Binding ValueA}" Width="280"/>
+                                <DataGridTextColumn Header="Значение B" Binding="{Binding ValueB}" Width="280"/>
+                                <DataGridTextColumn Header="Пояснение" Binding="{Binding Explanation}" Width="520"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </TabItem>
+                </TabControl>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</Window>
