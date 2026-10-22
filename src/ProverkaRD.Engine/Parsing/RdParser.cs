@@ -11,12 +11,24 @@ public static partial class RdParser
 {
     private static readonly HashSet<string> SurnameStop = new(StringComparer.Ordinal)
     {
-        "россия", "москва", "москвы", "документ", "документация", "версия", "лист", "листы",
-        "проект", "проекта", "раздел", "раздела", "инженер", "главный", "заказчик",
-        "согласовано", "начальник", "подпись", "дата", "объем", "объём", "работ",
-        "создание", "строительство", "комплект", "чертежей", "основной", "рабочая",
-        "ведомость", "наименование", "должность", "составил", "проверил", "инв",
+        "россия", "москва", "москвы", "документ", "документация", "версия", "лист", "листы", "листов",
+        "проект", "проекта", "раздел", "раздела", "инженер", "главный", "заказчик", "подрядчик",
+        "согласовано", "начальник", "подпись", "подп", "дата", "объем", "объём", "работ",
+        "создание", "строительство", "комплект", "комплектов", "чертеж", "чертежей", "основной", "рабочая",
+        "ведомость", "наименование", "должность", "составил", "составитель", "проверил", "проверила", "инв",
+        "общие", "общее", "общая", "тепловая", "тепловой", "телефон", "разработал", "разработала", "разраб",
+        "данные", "спецификация", "конструкция", "конструкции", "проверка", "стадия", "изменения", "изменение",
+        "формат", "масса", "масштаб", "объект", "адрес", "отопление", "вентиляция", "водоснабжение",
+        "канализация", "электрика", "электроснабжение", "автоматизация", "архитектура", "конструктив",
+        "пояснительная", "записка", "гип", "нормоконтроль", "отдел", "группа", "утвердил", "утвердил",
+        "исполнил", "руководитель", "заказчика", "подрядчика",
     };
+
+    private static readonly string[] RoleMarkers =
+    [
+        "разраб", "проверил", "пров.", "гип", "н.контр", "н. контр", "нормоконтр", "норм.контр",
+        "норм. контр", "нач.отд", "нач. отд", "составил", "утверд", "гл. спец", "гл.спец", "исполнил",
+    ];
 
     public static RdDocument Parse(string path)
     {
@@ -43,7 +55,7 @@ public static partial class RdParser
         if (title.Cipher is null)
             title = ExtractTitle(fullText);
 
-        var surnames = ExtractSurnames(fullText);
+        var surnames = ExtractSurnames(string.IsNullOrWhiteSpace(titleText) ? fullText : titleText + "\n" + fullText);
         string? signaturePath = null;
         IReadOnlyList<string> signers = [];
         string? signatureError = null;
@@ -147,7 +159,7 @@ public static partial class RdParser
         foreach (Match head in WorkingDocumentation().Matches(text))
         {
             var after = text[(head.Index + head.Length)..];
-            var found = FindCipher(after);
+            var found = FindCipherHit(after);
             if (found is null)
                 continue;
             var raw = after[..found.Value.Index];
@@ -184,17 +196,60 @@ public static partial class RdParser
         return name.Trim(' ', '.', '-', '–');
     }
 
-    private static List<string> ExtractSurnames(string text)
+    public static List<string> ExtractSurnames(string text)
     {
         var found = new List<string>();
         if (string.IsNullOrWhiteSpace(text))
             return found;
 
-        foreach (Match match in InitialsThenSurname().Matches(text))
-            found.Add(match.Groups[1].Value);
-        foreach (Match match in SurnameThenInitials().Matches(text))
-            found.Add(match.Groups[1].Value);
+        var lines = text.Replace('\r', '\n').Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (IsRoleLine(line))
+            {
+                var onLine = SurnamesOnLine(line);
+                found.AddRange(onLine);
+                if (onLine.Count == 0 && i + 1 < lines.Length)
+                    found.AddRange(SurnamesOnLine(lines[i + 1]));
+                continue;
+            }
+
+            if (IsStampLine(line) || (line.Trim().Length is > 0 and <= 80 && HasInitials(line)))
+                found.AddRange(SurnamesOnLine(line));
+        }
+
         return DistinctSurnames(found);
+    }
+
+    private static bool IsRoleLine(string line)
+    {
+        var normalized = TextMatch.Normalize(line);
+        return RoleMarkers.Any(marker => normalized.Contains(TextMatch.Normalize(marker), StringComparison.Ordinal));
+    }
+
+    private static bool IsStampLine(string line)
+    {
+        var normalized = TextMatch.Normalize(line);
+        var stamp = normalized.Contains("инв", StringComparison.Ordinal)
+                    || normalized.Contains("подпись", StringComparison.Ordinal)
+                    || normalized.Contains("подп", StringComparison.Ordinal)
+                    || normalized.Contains("взамен", StringComparison.Ordinal)
+                    || normalized.Contains("стадия", StringComparison.Ordinal);
+        return stamp && HasInitials(line);
+    }
+
+    private static bool HasInitials(string line) =>
+        InitialsThenSurname().IsMatch(line) || SurnameThenInitials().IsMatch(line);
+
+    private static List<string> SurnamesOnLine(string line)
+    {
+        var found = new List<string>();
+        foreach (Match match in InitialsThenSurname().Matches(line))
+            found.Add(match.Groups[1].Value);
+        foreach (Match match in SurnameThenInitials().Matches(line))
+            found.Add(match.Groups[1].Value);
+        return found;
     }
 
     public static List<string> DistinctSurnames(IEnumerable<string> surnames)
@@ -215,24 +270,24 @@ public static partial class RdParser
         return result;
     }
 
-    private static string? FirstCipher(string text)
-    {
-        var found = FindCipher(text);
-        return found?.Cipher;
-    }
+    public static string? FindCipher(string text) => FindCipherHit(text)?.Cipher;
 
-    private static CipherHit? FindCipher(string text)
+    private static string? FirstCipher(string text) => FindCipher(text);
+
+    private static CipherHit? FindCipherHit(string text)
     {
+        CipherHit? best = null;
         foreach (Match match in LooseCipher().Matches(text))
         {
-            var value = match.Value;
+            var value = match.Value.Trim().TrimEnd('.', ',', ';', ':');
             if (!HasCyrillic().IsMatch(value))
                 continue;
             if (value.Count(ch => ch == '-') < 3)
                 continue;
-            return new CipherHit(match.Index, value);
+            if (best is null || value.Length > best.Value.Cipher.Length)
+                best = new CipherHit(match.Index, value);
         }
-        return null;
+        return best;
     }
 
     private readonly record struct CipherHit(int Index, string Cipher);
@@ -244,7 +299,7 @@ public static partial class RdParser
     [GeneratedRegex(@"основной\s+комплект\s+(?:рабочих\s+)?чертежей", RegexOptions.IgnoreCase)]
     private static partial Regex BoilerplateRegex();
 
-    [GeneratedRegex(@"\d{3}-\d{2}-\d{3,6}(?:-[0-9A-Za-zА-Яа-яЁё]+)+")]
+    [GeneratedRegex(@"\d{3}-\d{2}-\d{3,6}(?:-[0-9A-Za-zА-Яа-яЁё]+(?:\.[0-9A-Za-zА-Яа-яЁё]+)*)+")]
     private static partial Regex LooseCipher();
 
     [GeneratedRegex(@"[А-Яа-яЁё]")]

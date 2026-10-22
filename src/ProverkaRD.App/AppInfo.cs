@@ -6,6 +6,10 @@ public static class AppInfo
 {
     public const string RepoOwner = "sozertsatel";
     public const string RepoName = "ProverkaRD";
+    public const string Description =
+        "Сверка акта сдачи-приёмки, ведомостей ВЭРД и ВЭСР и комплекта рабочей документации по одному элементу этапа.";
+
+    public static string RepoUrl => $"https://github.com/{RepoOwner}/{RepoName}";
 
     public static string Version { get; } = ReadVersion();
 
@@ -16,6 +20,16 @@ public static class AppInfo
 
     public static string LatestReleaseApi =>
         $"https://api.github.com/repos/{RepoOwner}/{RepoName}/releases/latest";
+
+    public static string Changelog()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        using var stream = assembly.GetManifestResourceStream("ProverkaRD.CHANGELOG.md");
+        if (stream is null)
+            return "";
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 
     private static string ReadVersion()
     {

@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="ProverkaRD.AboutWindow"
+        Title="О программе"
+        Width="640" Height="640"
+        MinWidth="480" MinHeight="420"
+        WindowStartupLocation="CenterOwner"
+        Background="White">
+    <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto">
+        <StackPanel Spacing="4">
+            <TextBlock Text="Проверка РД" FontSize="22" FontWeight="Bold" Foreground="#1F4E79"/>
+            <TextBlock x:Name="VersionText" FontSize="14" Foreground="#5C6B7A"/>
+            <TextBlock x:Name="DescriptionText" TextWrapping="Wrap" Margin="0,6,0,0"/>
+        </StackPanel>
+        <Button Grid.Row="1" HorizontalAlignment="Left" Margin="0,10,0,0" Padding="0" Background="Transparent"
+                Click="OnOpenRepo">
+            <TextBlock Text="github.com/sozertsatel/ProverkaRD" Foreground="#1F4E79" TextDecorations="Underline"/>
+        </Button>
+        <Border Grid.Row="2" Margin="0,14,0,0" Padding="12" CornerRadius="8" Background="#F3F5F8">
+            <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Проверить обновления" Click="OnCheckUpdates"/>
+                    <Button x:Name="OpenReleasesButton" Content="Открыть страницу релизов" IsVisible="False" Click="OnOpenReleases"/>
+                </StackPanel>
+                <TextBlock x:Name="UpdateStatus" TextWrapping="Wrap" Foreground="#5C6B7A"/>
+            </StackPanel>
+        </Border>
+        <TextBlock Grid.Row="3" Text="История изменений" FontWeight="SemiBold" Margin="0,14,0,6"/>
+        <Border Grid.Row="4" BorderBrush="#E2E7EE" BorderThickness="1" CornerRadius="8">
+            <ScrollViewer Padding="12">
+                <SelectableTextBlock x:Name="ChangelogText" TextWrapping="Wrap" FontSize="13"/>
+            </ScrollViewer>
+        </Border>
+        <Button Grid.Row="5" Content="Закрыть" HorizontalAlignment="Right" Margin="0,12,0,0" MinWidth="100" Click="OnClose"/>
+    </Grid>
+</Window>
