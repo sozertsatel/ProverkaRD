@@ -8,6 +8,8 @@ public static class FindingSources
         {
             case "Стоимость без НДС":
             case "Стоимость с НДС":
+            case "Сумма НДС":
+            case "Цена за единицу":
             case "Единица измерения":
             case "Количество":
                 return (valueA, "", "", valueB);
@@ -16,6 +18,7 @@ public static class FindingSources
             case "Фамилия без подписи":
             case "Фамилии в комплекте":
             case "Электронная подпись":
+            case "Подпись не относится к файлу":
             case "Подписант не найден в документе":
             case "Номер элемента на титуле РД":
             case "Посторонний файл":

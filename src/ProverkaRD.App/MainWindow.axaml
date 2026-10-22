@@ -18,7 +18,7 @@
                 <StackPanel Spacing="4">
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <TextBlock Text="Проверка РД" FontSize="28" FontWeight="Bold" Foreground="White"/>
-                        <TextBlock x:Name="VersionText" Text="0.0.8" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+                        <TextBlock x:Name="VersionText" Text="0.0.9" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
                     </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -117,16 +117,16 @@
             </Grid>
 
             <DockPanel Grid.Row="1" Margin="0,12,0,0">
-                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="2,0,0,8">
-                    <StackPanel Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding SummaryText}" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                        <TextBox PlaceholderText="Фильтр по акту, шифру или тексту" Text="{Binding FilterText}" Width="320"/>
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-                        <Button Content="Выгрузить отчёт (Excel)" Click="OnExport" IsEnabled="{Binding CanExport}" VerticalAlignment="Center"/>
-                        <Button Classes="accent" Content="Проверить" Click="OnCheck" IsEnabled="{Binding CanRun}"/>
-                    </StackPanel>
-                </Grid>
+                <StackPanel DockPanel.Dock="Top" Margin="2,0,0,8" Spacing="8">
+                    <TextBlock Text="{Binding SummaryText}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBox PlaceholderText="Фильтр по акту, шифру или тексту" Text="{Binding FilterText}" Width="320" HorizontalAlignment="Left"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                            <Button Content="Выгрузить отчёт (Excel)" Click="OnExport" IsEnabled="{Binding CanExport}" VerticalAlignment="Center"/>
+                            <Button Classes="accent" Content="Проверить" Click="OnCheck" IsEnabled="{Binding CanRun}"/>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
                 <TabControl>
                     <TabItem Header="Акты">
                         <DataGrid ItemsSource="{Binding FilteredActs}" IsReadOnly="True" CanUserSortColumns="True"
@@ -151,6 +151,8 @@
                                 <DataGridTextColumn Header="Без НДС, ВЭСР" Binding="{Binding VesrNet, StringFormat={}{0:N2}}" Width="140"/>
                                 <DataGridTextColumn Header="Без НДС" Binding="{Binding NetStatus, Converter={StaticResource SevText}}" Width="140"/>
                                 <DataGridTextColumn Header="С НДС" Binding="{Binding GrossStatus, Converter={StaticResource SevText}}" Width="140"/>
+                                <DataGridTextColumn Header="НДС" Binding="{Binding VatStatus, Converter={StaticResource SevText}}" Width="120"/>
+                                <DataGridTextColumn Header="Цена за единицу" Binding="{Binding UnitPriceStatus, Converter={StaticResource SevText}}" Width="150"/>
                                 <DataGridTextColumn Header="Комплектность" Binding="{Binding CompletenessStatus, Converter={StaticResource SevText}}" Width="160"/>
                                 <DataGridTextColumn Header="Состав" Binding="{Binding CompletenessText}" Width="360"/>
                             </DataGrid.Columns>

@@ -11,6 +11,7 @@ static class Headless
         string? output = null;
         var acts = new List<string>();
         var rd = new List<string>();
+        var rdFolders = new List<string>();
 
         try
         {
@@ -44,7 +45,10 @@ static class Headless
                         rd.Add(Next(args, ref i, arg));
                         break;
                     case "--rds":
-                        rd.AddRange(Expand(Next(args, ref i, arg), ".pdf", ".docx"));
+                        var rds = Next(args, ref i, arg);
+                        if (Directory.Exists(rds))
+                            rdFolders.Add(Path.GetFullPath(rds));
+                        rd.AddRange(Expand(rds, ".pdf", ".docx"));
                         break;
                     default:
                         Console.Error.WriteLine("Неизвестный аргумент: " + arg);
@@ -71,6 +75,7 @@ static class Headless
             VesrPath = vesr,
             ActPaths = acts,
             RdPaths = rd,
+            RdFolders = rdFolders,
         });
         ReportWriter.Write(report, output, AppInfo.Version);
 
@@ -78,6 +83,8 @@ static class Headless
         var formatting = report.Findings.Count(f => f.Severity == Severity.Formatting);
         var warnings = report.Findings.Count(f => f.Severity == Severity.Warning);
         Console.WriteLine("Отчёт записан: " + output);
+        if (!string.IsNullOrWhiteSpace(report.Load.Text))
+            Console.WriteLine(report.Load.Text);
         Console.WriteLine($"Актов: {report.Acts.Count}. Комплектов: {report.Kits.Count}. Критично: {critical}. Оформление: {formatting}. Предупреждения: {warnings}.");
         return 0;
     }

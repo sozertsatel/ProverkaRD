@@ -322,6 +322,10 @@ public static partial class TextMatch
 
     public static bool MoneyEquals(decimal left, decimal right) => Math.Abs(left - right) <= 0.01m;
 
+    /// <summary>Равенство денег после округления до копейки, без допуска.</summary>
+    public static bool SameKopecks(decimal left, decimal right) =>
+        decimal.Round(left, 2, MidpointRounding.AwayFromZero) == decimal.Round(right, 2, MidpointRounding.AwayFromZero);
+
     public static string CollapseLines(string? value) =>
         Whitespace().Replace(StripInvisible(value).Replace('\u00A0', ' '), " ").Trim();
 

@@ -6,8 +6,8 @@ namespace ProverkaRD.Engine;
 
 public sealed partial class CheckingEngine
 {
-    private const decimal VatRate = 0.22m;
     private readonly List<Finding> _findings = [];
+    private readonly List<RdDocument> _stray = [];
     private bool _rdFilesLoaded;
     private string _currentElement = "";
     private string _currentActPath = "";
@@ -16,6 +16,7 @@ public sealed partial class CheckingEngine
     public CheckReport Run(CheckInput input)
     {
         _findings.Clear();
+        _stray.Clear();
         _currentElement = "";
         _currentActPath = "";
         _options = input.Options ?? new CheckOptions();
@@ -84,6 +85,8 @@ public sealed partial class CheckingEngine
         var rdFiles = new List<RdDocument>();
         foreach (var path in DistinctFiles(input.RdPaths))
         {
+            if (Directory.Exists(path))
+                continue;
             if (path.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
                 continue;
             if (RdFileRules.IsAuxiliary(path))
@@ -91,6 +94,7 @@ public sealed partial class CheckingEngine
             var rd = RdParser.Parse(path);
             if (RdFileRules.IsStray(rd))
             {
+                _stray.Add(rd);
                 Add("—", "—", "Посторонний файл", rd.FileName, "", Severity.Warning, "");
                 continue;
             }
@@ -136,8 +140,13 @@ public sealed partial class CheckingEngine
             .OrderBy(f => ElementOrder.Key(ElementOrder.First(f.ElementNo)), IntArrayComparer.Instance)
             .ThenByDescending(f => f.Severity)
             .ThenBy(f => f.CheckName, StringComparer.CurrentCultureIgnoreCase));
+        report.Load = BuildLoadStats(input, acts, rdFiles, usedRd);
         return report;
     }
+
+    private decimal VatFraction => _options.VatPercent / 100m;
+
+    private string VatPercentText => _options.VatPercent.ToString("0.##", CultureInfo.GetCultureInfo("ru-RU"));
 
     private void CheckAct(
         ActDocument act,
@@ -301,16 +310,16 @@ public sealed partial class CheckingEngine
             Add(label, "—", "Стоимость без НДС", TextMatch.FormatMoney(actNet.Value), "",
                 Severity.Critical, "Не с чем сравнить сумму без НДС: строка ВЭСР по коду акта не найдена.");
         }
-        else if (!TextMatch.MoneyEquals(actNet.Value, vesrNet.Value))
+        else if (!TextMatch.SameKopecks(actNet.Value, vesrNet.Value))
         {
             netStatus = Severity.Critical;
             var delta = actNet.Value - vesrNet.Value;
             Add(label, "—", "Стоимость без НДС", TextMatch.FormatMoney(actNet.Value), TextMatch.FormatMoney(vesrNet.Value),
                 Severity.Critical,
-                "Сумма без НДС в акте не равна столбцу F ВЭСР по коду " + actCode + ". Разница " + TextMatch.FormatMoney(delta) + " руб. Допуск сверки 0,01 руб.");
+                "Сумма без НДС в акте не равна столбцу «Всего» ВЭСР по коду " + actCode + ". Разница " + TextMatch.FormatMoney(delta) + " руб.");
         }
 
-        decimal? recalc = vesrNet is null ? null : decimal.Round(vesrNet.Value * (1m + VatRate), 2, MidpointRounding.AwayFromZero);
+        decimal? recalc = vesrNet is null ? null : decimal.Round(vesrNet.Value * (1m + VatFraction), 2, MidpointRounding.AwayFromZero);
         var grossStatus = Severity.Ok;
         if (actGross is null)
         {
@@ -322,12 +331,46 @@ public sealed partial class CheckingEngine
         {
             grossStatus = Severity.Critical;
         }
-        else if (!TextMatch.MoneyEquals(actGross.Value, recalc.Value))
+        else if (!TextMatch.SameKopecks(actGross.Value, recalc.Value))
         {
             grossStatus = Severity.Critical;
             Add(label, "—", "Стоимость с НДС", TextMatch.FormatMoney(actGross.Value), TextMatch.FormatMoney(recalc.Value),
                 Severity.Critical,
-                "Сумма с НДС в акте не равна пересчёту ВЭСР × 1,22 (НДС 22%). Допуск 0,01 руб.");
+                "Сумма с НДС в акте не равна пересчёту «Всего» ВЭСР × (1 + " + VatPercentText + "%).");
+        }
+
+        decimal? vatCalc = vesrNet is null ? null : decimal.Round(vesrNet.Value * VatFraction, 2, MidpointRounding.AwayFromZero);
+        var vatStatus = Severity.Ok;
+        if (vesrNet is not null && actVat is null)
+        {
+            vatStatus = Severity.Critical;
+            Add(label, "—", "Сумма НДС", "", TextMatch.FormatMoney(vatCalc!.Value),
+                Severity.Critical, "В акте нет суммы НДС.");
+        }
+        else if (vesrNet is not null && actVat is not null && !TextMatch.SameKopecks(actVat.Value, vatCalc!.Value))
+        {
+            vatStatus = Severity.Critical;
+            Add(label, "—", "Сумма НДС", TextMatch.FormatMoney(actVat.Value), TextMatch.FormatMoney(vatCalc.Value),
+                Severity.Critical,
+                "НДС в акте не равен «Всего» ВЭСР × " + VatPercentText + "%.");
+        }
+
+        var unitStatus = Severity.Ok;
+        decimal? vesrUnit = vesrByAct?.UnitPrice;
+        if (vesrByAct is not null && actNet is not null)
+        {
+            if (vesrUnit is null)
+            {
+                unitStatus = Severity.Critical;
+                Add(label, "—", "Цена за единицу", TextMatch.FormatMoney(actNet.Value), "",
+                    Severity.Critical, "В ВЭСР нет цены за единицу по коду " + actCode + ".");
+            }
+            else if (!TextMatch.SameKopecks(actNet.Value, vesrUnit.Value))
+            {
+                unitStatus = Severity.Critical;
+                Add(label, "—", "Цена за единицу", TextMatch.FormatMoney(actNet.Value), TextMatch.FormatMoney(vesrUnit.Value),
+                    Severity.Critical, "Цена за единицу в ВЭСР не равна стоимости без НДС в акте.");
+            }
         }
 
         NoteInternalArithmetic(label, actNet, actVat, actGross);
@@ -346,7 +389,7 @@ public sealed partial class CheckingEngine
 
         var completeness = CheckCompleteness(label, act, element, actElementName, rdByCipher, usedRd, report, out var completenessText);
 
-        var overall = SeverityText.Worst(nameStatus, costNameStatus, codeStatus, netStatus, grossStatus, completeness);
+        var overall = SeverityText.Worst(nameStatus, costNameStatus, codeStatus, netStatus, vatStatus, grossStatus, unitStatus, completeness);
         // Внутренняя арифметика уже попала в замечания и должна красить итог.
         if (_findings.Any(f => f.Act == label && f.CheckName == "Арифметика акта" && f.Severity == Severity.Critical))
             overall = Severity.Critical;
@@ -371,9 +414,13 @@ public sealed partial class CheckingEngine
             VesrNet = vesrNet,
             NetStatus = netStatus,
             ActVat = actVat,
+            VatRecalculated = vatCalc,
+            VatStatus = vatStatus,
             ActGross = actGross,
             GrossRecalculated = recalc,
             GrossStatus = grossStatus,
+            VesrUnitPrice = vesrUnit,
+            UnitPriceStatus = unitStatus,
             ActKitCount = act.Kits.Count,
             VerdKitCount = element?.Kits.Count ?? 0,
             CompletenessText = completenessText,
@@ -597,7 +644,7 @@ public sealed partial class CheckingEngine
         if (rd is not null)
         {
             (surnameStatus, missingSigners) = AuditSigners(actLabel, cipher, rd);
-            if (rd.SignaturePath is null)
+            if (rd.SignaturePath is null || rd.SignatureRejected)
                 fileStatus = SeverityText.Worst(fileStatus, Severity.Critical);
             else if (rd.SignatureNameDiffers)
                 fileStatus = SeverityText.Worst(fileStatus, Severity.Formatting);
@@ -659,7 +706,18 @@ public sealed partial class CheckingEngine
             rd.SignatureError,
             _options.IgnoredSigners);
 
-        if (rd.SignatureNameDiffers && rd.SignaturePath is not null)
+        if (rd.SignatureRejected)
+        {
+            var text = "Подпись не относится к файлу";
+            if (!string.IsNullOrWhiteSpace(rd.RejectedSignatureName))
+                text += " (" + rd.RejectedSignatureName + ")";
+            if (!string.IsNullOrWhiteSpace(rd.CoveringSignatureName))
+                text += ". Подходит " + rd.CoveringSignatureName;
+            Add(actLabel, cipher, "Подпись не относится к файлу", text, "", Severity.Critical, "");
+            if (rd.SignaturePath is null)
+                return (Severity.Critical, "");
+        }
+        else if (rd.SignatureNameDiffers && rd.SignaturePath is not null)
         {
             Add(actLabel, cipher, "Электронная подпись",
                 "Ошибка оформления: файл подписи назван иначе (" + Path.GetFileName(rd.SignaturePath) + ")",
@@ -705,10 +763,10 @@ public sealed partial class CheckingEngine
                          + ", а сумма с НДС в акте " + TextMatch.FormatMoney(gross.Value));
         }
 
-        var fromNet = decimal.Round(net.Value * (1m + VatRate), 2, MidpointRounding.AwayFromZero);
-        if (!TextMatch.MoneyEquals(gross.Value, fromNet))
+        var fromNet = decimal.Round(net.Value * (1m + VatFraction), 2, MidpointRounding.AwayFromZero);
+        if (!TextMatch.SameKopecks(gross.Value, fromNet))
         {
-            messages.Add("без НДС × 1,22 = " + TextMatch.FormatMoney(fromNet)
+            messages.Add("без НДС × (1 + " + VatPercentText + "%) = " + TextMatch.FormatMoney(fromNet)
                          + ", а сумма с НДС в акте " + TextMatch.FormatMoney(gross.Value));
         }
 
@@ -718,7 +776,7 @@ public sealed partial class CheckingEngine
             net is null ? "" : TextMatch.FormatMoney(net.Value),
             TextMatch.FormatMoney(gross.Value),
             Severity.Critical,
-            "Суммы внутри акта не сходятся: " + string.Join("; ", messages) + ". Ставка НДС в проверке — 22%, допуск 0,01 руб.");
+            "Суммы внутри акта не сходятся: " + string.Join("; ", messages) + ". Ставка НДС в проверке — " + VatPercentText + "%.");
     }
 
     private void Add(string act, string kit, string check, string valueA, string valueB, Severity severity, string explanation)
@@ -868,6 +926,127 @@ public sealed partial class CheckingEngine
             .DefaultIfEmpty(int.MaxValue)
             .ToArray();
     }
+
+    private LoadStats BuildLoadStats(
+        CheckInput input,
+        List<ActDocument> acts,
+        List<RdDocument> rdFiles,
+        HashSet<RdDocument> usedRd)
+    {
+        var actsLoaded = acts.Count > 0;
+        var matchedPdf = 0;
+        var loosePdf = 0;
+        var matchedDocx = 0;
+        var looseDocx = 0;
+        foreach (var rd in rdFiles)
+        {
+            var matched = usedRd.Contains(rd);
+            if (IsPdf(rd.FilePath))
+            {
+                if (matched)
+                    matchedPdf++;
+                else if (actsLoaded)
+                    loosePdf++;
+            }
+            else if (IsDocx(rd.FilePath))
+            {
+                if (matched)
+                    matchedDocx++;
+                else if (actsLoaded)
+                    looseDocx++;
+            }
+        }
+
+        var strayPdf = _stray.Count(rd => IsPdf(rd.FilePath));
+        var strayDocx = _stray.Count(rd => IsDocx(rd.FilePath));
+        var (auxiliary, signatures) = ScanSideFiles(input);
+        var pdfs = matchedPdf + loosePdf + strayPdf;
+        var docx = matchedDocx + looseDocx + strayDocx;
+        var kits = acts.Sum(act => act.Kits.Count);
+        var text = "Актов: " + acts.Count
+            + ". Комплектов в актах: " + kits
+            + ", найдено PDF: " + pdfs
+            + ". Из PDF к актам подошло: " + matchedPdf
+            + ", «Комплект вне актов»: " + loosePdf
+            + ", «Посторонний файл»: " + strayPdf
+            + ". Пропущено .СВОР/_ИЗМ: " + auxiliary
+            + ". Файлов .sig: " + signatures
+            + ".";
+        if (docx > 0)
+        {
+            text += " DOCX: " + docx
+                + " (подошло " + matchedDocx
+                + ", «Комплект вне актов»: " + looseDocx
+                + ", «Посторонний файл»: " + strayDocx
+                + ").";
+        }
+
+        text += " Ставка НДС: " + VatPercentText + "%.";
+        return new LoadStats
+        {
+            Acts = acts.Count,
+            ActSets = kits,
+            Pdfs = pdfs,
+            MatchedPdfs = matchedPdf,
+            LoosePdfs = loosePdf,
+            StrayPdfs = strayPdf,
+            Docx = docx,
+            MatchedDocx = matchedDocx,
+            LooseDocx = looseDocx,
+            StrayDocx = strayDocx,
+            Auxiliary = auxiliary,
+            Signatures = signatures,
+            Text = text,
+        };
+    }
+
+    private static (int Auxiliary, int Signatures) ScanSideFiles(CheckInput input)
+    {
+        var signatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var auxiliary = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var folder in input.RdFolders)
+            ScanDirectory(folder, recursive: true, signatures, auxiliary);
+        foreach (var path in input.RdPaths)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                continue;
+            if (Directory.Exists(path))
+                ScanDirectory(path, recursive: true, signatures, auxiliary);
+            else if (File.Exists(path))
+            {
+                var parent = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(parent))
+                    ScanDirectory(parent, recursive: false, signatures, auxiliary);
+            }
+        }
+
+        return (auxiliary.Count, signatures.Count);
+    }
+
+    private static void ScanDirectory(string directory, bool recursive, HashSet<string> signatures, HashSet<string> auxiliary)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            return;
+        try
+        {
+            var option = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+            foreach (var file in Directory.EnumerateFiles(directory, "*", option))
+            {
+                if (file.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
+                    signatures.Add(Path.GetFullPath(file));
+                else if (RdFileRules.IsAuxiliary(file))
+                    auxiliary.Add(Path.GetFullPath(file));
+            }
+        }
+        catch
+        {
+            // Недоступная папка не должна срывать уже посчитанную проверку.
+        }
+    }
+
+    private static bool IsPdf(string path) => path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDocx(string path) => path.EndsWith(".docx", StringComparison.OrdinalIgnoreCase);
 
     private static string? NameOf(string? path) =>
         string.IsNullOrWhiteSpace(path) ? null : Path.GetFileName(path);

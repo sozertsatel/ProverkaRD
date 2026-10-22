@@ -65,17 +65,27 @@ public static partial class RdParser
         string? signatureError = null;
         var parsed = false;
         var signatureNameDiffers = false;
+        var signatureRejected = false;
+        string? rejectedSignatureName = null;
+        string? coveringSignatureName = null;
         try
         {
             var located = SignatureParser.Locate(path);
             if (located is not null)
             {
-                signaturePath = located.Value.Path;
                 signatureNameDiffers = located.Value.NameDiffers;
-                var read = SignatureParser.Read(signaturePath);
-                signers = DistinctSurnames(read.Surnames);
-                signatureError = read.Error;
-                parsed = read.Error is null;
+                signatureRejected = located.Value.ExactRejected;
+                rejectedSignatureName = located.Value.ExactName;
+                coveringSignatureName = located.Value.CoveringName;
+                var readSigners = coveringSignatureName is not null || !signatureRejected;
+                if (readSigners)
+                {
+                    signaturePath = located.Value.Path;
+                    var read = SignatureParser.Read(signaturePath);
+                    signers = DistinctSurnames(read.Surnames);
+                    signatureError = read.Error;
+                    parsed = read.Error is null;
+                }
             }
         }
         catch (Exception ex)
@@ -96,6 +106,9 @@ public static partial class RdParser
             Surnames = surnames,
             SignaturePath = signaturePath,
             SignatureNameDiffers = signatureNameDiffers,
+            SignatureRejected = signatureRejected,
+            RejectedSignatureName = rejectedSignatureName,
+            CoveringSignatureName = coveringSignatureName,
             Signers = signers,
             SignatureParsed = parsed,
             SignatureError = signatureError,
