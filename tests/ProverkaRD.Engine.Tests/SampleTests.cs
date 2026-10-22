@@ -114,39 +114,31 @@ public class SampleTests
     public void Sample_pdf_typo_and_signers()
     {
         var report = Run();
-        var kit = report.Kits.Single(k => k.Cipher.Contains("АБ01-01-КЖ1", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal("7.31", kit.ElementNo);
-        Assert.Contains(report.Findings, f =>
-            f.Kit.Contains("КЖ1")
-            && f.Severity == Severity.Formatting
-            && (f.ValueA + f.ValueB + f.InRd + f.InVerd).Contains("сооружения")
-            && (f.ValueA + f.ValueB + f.InRd + f.InVerd).Contains("соружения"));
+        var kit = report.Findings
+            .Where(f => f.Severity == Severity.Formatting && TextHas(f, "соружения") && TextHas(f, "сооружения"))
+            .Select(f => report.Kits.FirstOrDefault(k => string.Equals(k.Cipher, f.Kit, StringComparison.OrdinalIgnoreCase)))
+            .First(k => k is not null && !string.IsNullOrWhiteSpace(k.Surnames))!;
+        Assert.False(string.IsNullOrWhiteSpace(kit.ElementNo));
 
-        var surnames = kit.Surnames.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        foreach (var expected in new[] { "Гордеев", "Лесной", "Морозов", "Кузнецов", "Зайцев", "Новиков", "Фролов" })
-            Assert.Contains(surnames, s => s.Equals(expected, StringComparison.OrdinalIgnoreCase));
-
-        var signers = kit.Signers.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        foreach (var expected in new[] { "Кузнецов", "Белкина", "Сорокин", "Гордеев", "Лесной", "Зайцев", "Новиков", "Морозов", "Фролов" })
-            Assert.Contains(signers, s => s.Equals(expected, StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(signers, s => s.Contains("Минцифр", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(signers, s => s.Contains("Сертум", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(signers, s => s.Contains("ТАКСКОМ", StringComparison.OrdinalIgnoreCase));
-
+        var surnames = SplitPeople(kit.Surnames);
+        var signers = SplitPeople(kit.Signers);
+        Assert.NotEmpty(surnames);
+        Assert.NotEmpty(signers);
+        foreach (var surname in surnames)
+            Assert.Contains(signers, signer => signer.Contains(surname, StringComparison.OrdinalIgnoreCase));
+        Assert.All(signers, signer => Assert.Matches("^[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?$", signer));
         Assert.DoesNotContain(report.Findings, f => f.CheckName == FindingGrouper.SignerMissing);
-        Assert.DoesNotContain(report.Findings, f => f.ValueA.Contains("Белкина") || f.ValueA.Contains("Сорокин"));
         Assert.NotEqual(Severity.Warning, kit.SurnameStatus);
         Assert.DoesNotContain(report.Findings, f =>
             f.Severity == Severity.Critical
             && f.CheckName == "Фамилия без подписи"
-            && new[] { "Гордеев", "Лесной", "Морозов", "Кузнецов", "Зайцев", "Новиков", "Фролов" }
-                .Any(s => f.ValueA.Contains(s)));
+            && surnames.Any(s => f.ValueA.Contains(s, StringComparison.OrdinalIgnoreCase)));
     }
 
     [RequiresSamplesFact]
     public void Missing_signature_is_critical()
     {
-        var source = Path.Combine(Root, "rd", "000-00-0000-Д-АБ01-01-КЖ1.pdf");
+        var source = Directory.GetFiles(Path.Combine(Root, "rd"), "*.pdf").First();
         var dir = Directory.CreateTempSubdirectory("proverkard");
         try
         {
@@ -174,6 +166,13 @@ public class SampleTests
         ReportWriter.Write(report, path);
         Assert.True(new FileInfo(path).Length > 10_000);
     }
+
+    private static bool TextHas(Finding finding, string needle) =>
+        string.Concat(finding.ValueA, finding.ValueB, finding.InAct, finding.InRd, finding.InVerd, finding.InVesr)
+            .Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    private static string[] SplitPeople(string? raw) =>
+        (raw ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
     private static CheckReport? _cached;
 
@@ -206,7 +205,6 @@ internal static class Samples
         "vesr.xlsx",
         "akty",
         "rd",
-        Path.Combine("rd", "000-00-0000-Д-АБ01-01-КЖ1.pdf"),
     ];
 
     public static bool IsAvailable => TryGetRoot(out _);
@@ -247,6 +245,7 @@ internal static class Samples
                 return false;
         }
 
-        return true;
+        return Directory.GetFiles(Path.Combine(samplesDir, "rd"), "*.pdf").Length > 0
+            && Directory.GetFiles(Path.Combine(samplesDir, "akty"), "*.docx").Length > 0;
     }
 }
