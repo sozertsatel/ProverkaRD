@@ -14,6 +14,9 @@
                    Text="Игнорируемые подписанты не попадают в замечания о фамилии. По одному в строке. Сравнение по основе фамилии: «Павлову» и «Павлов» — один человек."/>
         <TextBox x:Name="IgnoredBox" AcceptsReturn="True" Height="120" TextWrapping="Wrap"/>
         <CheckBox x:Name="UpdatesBox" Content="Проверять обновления при запуске"/>
+        <Button Content="Принудительное обновление" Click="OnForceUpdate" HorizontalAlignment="Left"/>
+        <TextBlock TextWrapping="Wrap" Foreground="#5C6B7A"
+                   Text="Скачивает последний релиз и ставит его заново, даже если версия совпадает с установленной. Проверка SHA256 и замена файла — те же, что у обычного обновления."/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
             <Button Content="О программе" Click="OnAbout"/>
             <Button Classes="primary" Content="Закрыть" Click="OnClose" MinWidth="100"/>

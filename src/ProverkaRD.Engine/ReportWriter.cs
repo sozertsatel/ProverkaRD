@@ -140,15 +140,15 @@ public static class ReportWriter
             sheet.Cell(row, col++).Value = kit.ActCipher;
             sheet.Cell(row, col++).Value = kit.VerdCipher;
             sheet.Cell(row, col++).Value = kit.TitleCipher;
-            Status(sheet.Cell(row, col++), kit.CipherStatus);
+            Status(sheet.Cell(row, col++), kit.CipherStatus, kit.CipherBlame);
             sheet.Cell(row, col++).Value = kit.ActKitName;
             sheet.Cell(row, col++).Value = kit.VerdKitName;
             sheet.Cell(row, col++).Value = kit.RdKitName;
-            Status(sheet.Cell(row, col++), kit.NameStatus);
+            Status(sheet.Cell(row, col++), kit.NameStatus, kit.NameBlame);
             sheet.Cell(row, col++).Value = kit.ActElementName;
             sheet.Cell(row, col++).Value = kit.VerdElementName;
             sheet.Cell(row, col++).Value = kit.RdElementName;
-            Status(sheet.Cell(row, col++), kit.ElementNameStatus);
+            Status(sheet.Cell(row, col++), kit.ElementNameStatus, kit.ElementNameBlame);
             YesNo(sheet.Cell(row, col++), kit.PdfState, Severity.Warning);
             YesNo(sheet.Cell(row, col++), kit.SigState, Severity.Critical);
             sheet.Cell(row, col++).Value = kit.Surnames;
@@ -183,13 +183,13 @@ public static class ReportWriter
         var headers = new[]
         {
             "№", "Элемент", "Критичность", "Что проверялось",
-            "В акте", "В РД", "В ВЭРД", "В ВЭСР", "Где",
+            "В акте", "В РД", "В ВЭРД", "В ВЭСР", "Где", "Где ошибка",
         };
         sheet.Cell(1, 1).Value = Titled("Замечания", appVersion);
         sheet.Cell(1, 1).Style.Font.Bold = true;
         sheet.Cell(1, 1).Style.Font.FontSize = 16;
         sheet.Range(1, 1, 1, headers.Length).Merge();
-        sheet.Cell(2, 1).Value = "Одно поле — одна строка: значения из акта, РД, ВЭРД и ВЭСР рядом. Отличающееся значение выделено. В столбце «Где» только шифры.";
+        sheet.Cell(2, 1).Value = "Одно поле — одна строка: значения из акта, РД, ВЭРД и ВЭСР рядом. Отличающееся значение выделено. В столбце «Где» только шифры. «Где ошибка» заполняется, если два источника совпадают, а третий нет.";
         sheet.Range(2, 1, 2, headers.Length).Merge();
 
         const int headerRow = 4;
@@ -209,6 +209,7 @@ public static class ReportWriter
             for (var i = 0; i < values.Length; i++)
                 WriteCompared(sheet.Cell(row, 5 + i), values[i], values);
             sheet.Cell(row, 9).Value = finding.Places;
+            sheet.Cell(row, 10).Value = finding.ErrorWhere;
             row++;
         }
 
@@ -223,6 +224,7 @@ public static class ReportWriter
         sheet.Column(7).Width = 36;
         sheet.Column(8).Width = 36;
         sheet.Column(9).Width = 42;
+        sheet.Column(10).Width = 22;
         if (row > headerRow + 1)
             sheet.Rows(headerRow + 1, row - 1).Style.Alignment.WrapText = true;
     }
@@ -253,9 +255,12 @@ public static class ReportWriter
         range.Worksheet.Row(range.FirstRow().RowNumber()).Height = 32;
     }
 
-    private static void Status(IXLCell cell, Severity severity)
+    private static void Status(IXLCell cell, Severity severity, string? blame = null)
     {
-        cell.Value = SeverityText.ToRu(severity);
+        var text = SeverityText.ToRu(severity);
+        if (severity != Severity.Ok && !string.IsNullOrWhiteSpace(blame))
+            text += ", " + blame.Trim();
+        cell.Value = text;
         Paint(cell, severity);
         cell.Style.Font.Bold = severity != Severity.Ok;
     }
