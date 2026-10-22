@@ -234,7 +234,9 @@ public static class AppUpdate
 
 public static class UpdateFlow
 {
-    public static async Task RunAsync(Window owner, bool interactive)
+    public static Task RunAsync(Window owner, bool interactive) => RunAsync(owner, interactive, force: false);
+
+    public static async Task RunAsync(Window owner, bool interactive, bool force)
     {
         UpdateCheckResult result;
         try
@@ -243,7 +245,7 @@ public static class UpdateFlow
         }
         catch (Exception ex)
         {
-            if (interactive)
+            if (interactive || force)
                 await Tell(owner, "Не удалось проверить обновления: " + ex.Message, AppInfo.ReleasesPage);
             return;
         }
@@ -251,36 +253,27 @@ public static class UpdateFlow
         var page = string.IsNullOrWhiteSpace(result.PageUrl) ? AppInfo.ReleasesPage : result.PageUrl;
         if (result.Kind == UpdateCheckKind.Offline)
         {
-            if (interactive)
+            if (interactive || force)
                 await Tell(owner, "Нет сети, проверить обновление не удалось.", page);
             return;
         }
 
         if (result.Kind == UpdateCheckKind.Unavailable)
         {
-            if (interactive)
+            if (interactive || force)
                 await Tell(owner, result.Message, page);
             return;
         }
 
-        if (result.Kind == UpdateCheckKind.UpToDate)
+        var install = UpdateOffer.ShouldInstall(result.Kind == UpdateCheckKind.Newer, force);
+        if (!install)
         {
-            if (interactive)
+            if (interactive && result.Kind == UpdateCheckKind.UpToDate)
                 await Tell(owner, result.Message, null);
             return;
         }
 
-        if (result.Kind != UpdateCheckKind.Newer)
-            return;
-
-        var notes = string.IsNullOrWhiteSpace(result.Notes) ? "Описание релиза не заполнено." : result.Notes.Trim();
-        var update = await Ask(
-            owner,
-            "Доступна версия " + result.RemoteTag + ". Что нового:",
-            notes,
-            "Обновить",
-            "Позже");
-        if (!update)
+        if (result.Kind is not (UpdateCheckKind.Newer or UpdateCheckKind.UpToDate))
             return;
 
         if (string.IsNullOrWhiteSpace(result.ExeUrl))
@@ -288,6 +281,13 @@ public static class UpdateFlow
             await Tell(owner, "В релизе " + result.RemoteTag + " нет файла ProverkaRD.exe.", page);
             return;
         }
+
+        var notes = string.IsNullOrWhiteSpace(result.Notes) ? "Описание релиза не заполнено." : result.Notes.Trim();
+        var update = force
+            ? await Ask(owner, "Переустановить версию " + result.RemoteTag + "?", notes, "Переустановить", "Отмена")
+            : await Ask(owner, "Доступна версия " + result.RemoteTag + ". Что нового:", notes, "Обновить", "Позже");
+        if (!update)
+            return;
 
         string? downloaded = null;
         var keepDownload = false;

@@ -64,11 +64,14 @@ public static partial class RdParser
         IReadOnlyList<string> signers = [];
         string? signatureError = null;
         var parsed = false;
+        var signatureNameDiffers = false;
         try
         {
-            signaturePath = SignatureParser.FindSignature(path);
-            if (signaturePath is not null)
+            var located = SignatureParser.Locate(path);
+            if (located is not null)
             {
+                signaturePath = located.Value.Path;
+                signatureNameDiffers = located.Value.NameDiffers;
                 var read = SignatureParser.Read(signaturePath);
                 signers = DistinctSurnames(read.Surnames);
                 signatureError = read.Error;
@@ -92,6 +95,7 @@ public static partial class RdParser
             ElementName = title.ElementName,
             Surnames = surnames,
             SignaturePath = signaturePath,
+            SignatureNameDiffers = signatureNameDiffers,
             Signers = signers,
             SignatureParsed = parsed,
             SignatureError = signatureError,
@@ -323,7 +327,7 @@ public static partial class RdParser
             }
         }
 
-        return new TitleInfo(cipher, kitName, elementNo, elementName);
+        return new TitleInfo(cipher, StripSignatory(kitName), elementNo, StripSignatory(elementName));
     }
 
     private static string AppendTitleContinuation(string text, string cipher, string kitName)
@@ -378,37 +382,56 @@ public static partial class RdParser
         return name.Trim(' ', '.', '-', '–');
     }
 
+    /// <summary>С титульного наименования снимаются «И.О.Фамилия» и «Фамилия И.О.».</summary>
+    private static string StripSignatory(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "";
+        var stripped = InitialsThenSurname().Replace(name, " ");
+        stripped = SurnameThenInitials().Replace(stripped, " ");
+        return TextMatch.CollapseLines(stripped).Trim(' ', ',', ';', ':');
+    }
+
     public sealed record RdPage(int Number, string Text, string Stamp);
 
     /// <summary>
-    /// Фамилии тома: два титульных листа, штамп на каждом листе и первый лист ВОР.
+    /// Фамилии тома: подписные строки двух титулов, графы штампа листов до первого ВОР
+    /// включительно и роли первого листа ВОР. Листы после ВОР не читаются.
     /// </summary>
     public static List<string> CollectSurnames(IReadOnlyList<RdPage> pages)
     {
+        var lexicon = TitleNameWords(pages);
         var found = new List<string>();
-        var vorTaken = false;
+        var passedVor = false;
         foreach (var page in pages)
         {
+            if (passedVor)
+                break;
+
             if (page.Number <= 2)
             {
-                found.AddRange(SurnamesFromRoleLines(page.Text));
-                found.AddRange(SurnamesOnLines(page.Text));
+                found.AddRange(SurnamesFromRoleLines(page.Text, lexicon));
+                found.AddRange(SurnamesFromSignatureLines(page.Text, lexicon));
             }
 
-            found.AddRange(SurnamesFromRoleLines(page.Stamp));
-            found.AddRange(BareStampNames(page.Stamp));
-
-            if (vorTaken || !IsVorPage(page.Text))
-                continue;
-            vorTaken = true;
-            found.AddRange(SurnamesFromRoleLines(page.Text));
+            var vor = IsVorPage(page.Text);
+            if (vor)
+            {
+                found.AddRange(SurnamesFromRoleLines(page.Text, lexicon));
+                found.AddRange(SurnamesFromRoleLines(page.Stamp, lexicon));
+                passedVor = true;
+            }
+            else
+            {
+                found.AddRange(SurnamesFromRoleLines(page.Stamp, lexicon));
+            }
         }
 
         return DistinctSurnames(found);
     }
 
     public static List<string> ExtractSurnames(string text) =>
-        DistinctSurnames(SurnamesFromRoleLines(text));
+        DistinctSurnames(SurnamesFromRoleLines(text, null));
 
     private static bool IsVorPage(string text)
     {
@@ -418,7 +441,34 @@ public static partial class RdParser
                || normalized.Contains("ведомость объемов", StringComparison.Ordinal);
     }
 
-    private static List<string> SurnamesFromRoleLines(string text)
+    private static HashSet<string> TitleNameWords(IReadOnlyList<RdPage> pages)
+    {
+        var words = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var page in pages)
+        {
+            if (page.Number > 2)
+                continue;
+            foreach (var line in SplitLines(page.Text).Concat(SplitLines(page.Stamp)))
+            {
+                if (IsRoleLine(line))
+                    continue;
+                var rest = InitialsThenSurname().Replace(line, " ");
+                rest = SurnameThenInitials().Replace(rest, " ");
+                foreach (var token in TextMatch.Normalize(rest).Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    foreach (var part in token.Split('-', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (part.Length >= 3)
+                            words.Add(part);
+                    }
+                }
+            }
+        }
+
+        return words;
+    }
+
+    private static List<string> SurnamesFromRoleLines(string text, ISet<string>? lexicon)
     {
         var found = new List<string>();
         if (string.IsNullOrWhiteSpace(text))
@@ -429,28 +479,42 @@ public static partial class RdParser
         {
             if (!IsRoleLine(lines[i]))
                 continue;
-            var onLine = SurnamesOnLine(lines[i]);
+            var onLine = SurnamesOnLine(lines[i], lexicon);
             found.AddRange(onLine);
-            if (onLine.Count == 0 && i + 1 < lines.Length)
-                found.AddRange(SurnamesOnLine(lines[i + 1]));
+            if (onLine.Count == 0 && i + 1 < lines.Length && !IsRoleLine(lines[i + 1]))
+                found.AddRange(SurnamesOnLine(lines[i + 1], lexicon));
         }
 
         return found;
     }
 
-    private static List<string> BareStampNames(string stamp)
+    private static List<string> SurnamesFromSignatureLines(string text, ISet<string> lexicon)
     {
         var found = new List<string>();
-        if (string.IsNullOrWhiteSpace(stamp))
-            return found;
-        foreach (var line in stamp.Replace('\r', '\n').Split('\n'))
+        foreach (var line in text.Replace('\r', '\n').Split('\n'))
         {
-            var trimmed = line.Trim();
-            if (trimmed.Length == 0 || IsRoleLine(trimmed))
+            if (IsRoleLine(line) || !IsSignatureLine(line))
                 continue;
-            found.AddRange(SurnamesOnLine(trimmed));
+            found.AddRange(SurnamesOnLine(line, lexicon));
         }
+
         return found;
+    }
+
+    private static bool IsSignatureLine(string line)
+    {
+        if (!InitialsThenSurname().IsMatch(line) && !SurnameThenInitials().IsMatch(line))
+            return false;
+        var rest = InitialsThenSurname().Replace(line, " ");
+        rest = SurnameThenInitials().Replace(rest, " ");
+        var tokens = TextMatch.Normalize(rest).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return tokens.All(IsSignatureLabel);
+    }
+
+    private static bool IsSignatureLabel(string token)
+    {
+        var plain = token.Replace(".", "");
+        return plain is "фио" or "подпись" or "подп" or "подписи";
     }
 
     private static bool IsRoleLine(string line)
@@ -473,23 +537,32 @@ public static partial class RdParser
         return false;
     }
 
-    private static List<string> SurnamesOnLines(string text)
-    {
-        var found = new List<string>();
-        foreach (var line in text.Replace('\r', '\n').Split('\n'))
-            found.AddRange(SurnamesOnLine(line));
-        return found;
-    }
-
-    private static List<string> SurnamesOnLine(string line)
+    private static List<string> SurnamesOnLine(string line, ISet<string>? lexicon)
     {
         var found = new List<string>();
         foreach (Match match in InitialsThenSurname().Matches(line))
-            found.Add(match.Groups[1].Value);
+            Take(match);
         foreach (Match match in SurnameThenInitials().Matches(line))
-            found.Add(match.Groups[1].Value);
+            Take(match);
         return found;
+
+        void Take(Match match)
+        {
+            var group = match.Groups[1];
+            var value = group.Value;
+            var start = group.Index;
+            var end = start + group.Length;
+            if (start > 0 && IsNameFragment(line[start - 1]))
+                return;
+            if (end < line.Length && IsNameFragment(line[end]))
+                return;
+            if (lexicon is not null && lexicon.Contains(TextMatch.Normalize(value)))
+                return;
+            found.Add(value);
+        }
     }
+
+    private static bool IsNameFragment(char value) => value == '-' || char.IsLetter(value);
 
     public static List<string> DistinctSurnames(IEnumerable<string> surnames)
     {

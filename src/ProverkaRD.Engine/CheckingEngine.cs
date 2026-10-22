@@ -424,22 +424,21 @@ public sealed partial class CheckingEngine
         foreach (var kit in act.Kits)
         {
             verdByKey.TryGetValue(TextMatch.CodeKey(kit.Cipher), out var verdKit);
-            var nameStatus = verdKit is null
-                ? Severity.Critical
-                : TextMatch.Compare(kit.Name, verdKit.Name);
-            if (nameStatus == Severity.Critical)
-                nameProblems++;
-            else if (nameStatus == Severity.Formatting)
-                nameFormatting++;
-            statuses.Add(nameStatus == Severity.Critical && verdKit is null && extra.Contains(kit.Cipher)
-                ? Severity.Ok
-                : nameStatus);
-
             RdDocument? rd = null;
             if (rdByCipher.TryGetValue(TextMatch.CodeKey(kit.Cipher), out var files))
             {
                 rd = files[0];
                 usedRd.Add(rd);
+            }
+
+            if (verdKit is not null || rd is not null)
+            {
+                var compared = CompareMany(kit.Name, verdKit?.Name ?? "", rd?.KitName ?? "");
+                if (compared == Severity.Critical)
+                    nameProblems++;
+                else if (compared == Severity.Formatting)
+                    nameFormatting++;
+                statuses.Add(compared);
             }
 
             var row = BuildKitRow(label, act.FilePath, act.AdvanceNet, element, kit.DgpCode.Length > 0 ? kit.DgpCode : element?.DgpCode ?? "", kit, verdKit, rd, actElementName);
@@ -461,9 +460,9 @@ public sealed partial class CheckingEngine
             parts.Add("лишние в акте: " + string.Join(", ", extra));
         if (nameProblems > 0)
             parts.Add("наименования различаются: " + nameProblems);
-        else if (nameFormatting > 0)
+        if (nameFormatting > 0)
             parts.Add("оформление наименований: " + nameFormatting);
-        else if (missing.Count == 0 && extra.Count == 0 && element is not null)
+        if (nameProblems == 0 && nameFormatting == 0 && missing.Count == 0 && extra.Count == 0 && element is not null)
             parts.Add("шифры и наименования совпадают");
         text = string.Join("; ", parts);
         return SeverityText.Worst(statuses);
@@ -523,6 +522,7 @@ public sealed partial class CheckingEngine
             shownTitle = fileCipher;
 
         var cipherStatus = CompareMany(actCipher, verdCipher, titleCipher, fileCipher);
+        var cipherBlame = cipherStatus == Severity.Ok ? "" : SourceBlame.Of(actCipher, titleCipher, verdCipher);
         if (cipherStatus != Severity.Ok)
         {
             var (left, right) = FirstMismatch(actCipher, verdCipher, titleCipher, fileCipher);
@@ -539,7 +539,8 @@ public sealed partial class CheckingEngine
                 TextMatch.ForReport(shownTitle),
                 TextMatch.ForReport(verdCipher),
                 "",
-                _currentActPath));
+                _currentActPath,
+                ErrorWhere: cipherBlame));
         }
 
         var actName = actKit?.Name ?? "";
@@ -552,11 +553,13 @@ public sealed partial class CheckingEngine
             nameStatus = SeverityText.Worst(nameStatus, Severity.Critical);
         if (actKit is null && verdKit is not null)
             nameStatus = SeverityText.Worst(nameStatus, Severity.Critical);
+        var nameBlame = nameStatus == Severity.Ok ? "" : SourceBlame.Of(actName, rdName, verdName);
 
         var actElement = actElementName ?? "";
         var verdElement = element?.Name ?? "";
         var rdElement = rd?.ElementName ?? "";
         var elementNameStatus = EmitField(actLabel, cipher, "Наименование элемента", actElement, rdElement, verdElement, "");
+        var elementNameBlame = elementNameStatus == Severity.Ok ? "" : SourceBlame.Of(actElement, rdElement, verdElement);
 
         var rdElementNo = rd?.ElementNo ?? "";
         var verdElementNo = element?.Number ?? "";
@@ -591,6 +594,8 @@ public sealed partial class CheckingEngine
             (surnameStatus, missingSigners) = AuditSigners(actLabel, cipher, rd);
             if (rd.SignaturePath is null)
                 fileStatus = SeverityText.Worst(fileStatus, Severity.Critical);
+            else if (rd.SignatureNameDiffers)
+                fileStatus = SeverityText.Worst(fileStatus, Severity.Formatting);
         }
 
         var presence = rd is null
@@ -610,10 +615,12 @@ public sealed partial class CheckingEngine
             VerdCipher = verdCipher,
             TitleCipher = shownTitle,
             CipherStatus = cipherStatus,
+            CipherBlame = cipherBlame,
             DgpCode = dgp,
             ActKitName = OneLine(actName),
             VerdKitName = OneLine(verdName),
             NameStatus = nameStatus,
+            NameBlame = nameBlame,
             PaperCopies = actKit?.PaperCopies ?? "",
             ElectronicCopies = actKit?.ElectronicCopies ?? "",
             RdFileName = rd?.FileName ?? "",
@@ -626,6 +633,7 @@ public sealed partial class CheckingEngine
             RdElementName = OneLine(rdElement),
             RdElementStatus = SeverityText.Worst(elementNameStatus, elementNoStatus),
             ElementNameStatus = elementNameStatus,
+            ElementNameBlame = elementNameBlame,
             PdfState = pdfState,
             SigState = sigState,
             Surnames = rd is null ? "" : string.Join(", ", rd.Surnames),
@@ -645,6 +653,15 @@ public sealed partial class CheckingEngine
             rd.SignaturePath is not null,
             rd.SignatureError,
             _options.IgnoredSigners);
+
+        if (rd.SignatureNameDiffers && rd.SignaturePath is not null)
+        {
+            Add(actLabel, cipher, "Электронная подпись",
+                "Ошибка оформления: файл подписи назван иначе (" + Path.GetFileName(rd.SignaturePath) + ")",
+                "",
+                Severity.Formatting,
+                "");
+        }
 
         if (rd.SignaturePath is null)
         {
@@ -804,7 +821,8 @@ public sealed partial class CheckingEngine
             TextMatch.ForReport(inRd),
             TextMatch.ForReport(inVerd),
             TextMatch.ForReport(inVesr),
-            _currentActPath));
+            _currentActPath,
+            ErrorWhere: SourceBlame.Of(inAct, inRd, inVerd)));
         return severity;
     }
 

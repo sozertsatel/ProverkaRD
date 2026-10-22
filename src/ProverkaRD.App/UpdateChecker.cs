@@ -72,7 +72,10 @@ public static class UpdateChecker
                 release.Tag,
                 $"Установлена актуальная версия {AppInfo.Version}.",
                 release.Body,
-                page);
+                page,
+                release.Exe?.Url,
+                release.Exe?.Size ?? 0,
+                release.Sha256?.Url);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
         {

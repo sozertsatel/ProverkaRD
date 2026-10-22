@@ -33,6 +33,12 @@ public partial class SettingsWindow : Window
         await new AboutWindow().ShowDialog(this);
     }
 
+    private async void OnForceUpdate(object? sender, RoutedEventArgs e)
+    {
+        Save();
+        await UpdateFlow.RunAsync(this, interactive: true, force: true);
+    }
+
     private void OnClose(object? sender, RoutedEventArgs e)
     {
         Save();

@@ -91,6 +91,11 @@ public static class FindingGrouper
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        var where = group
+            .Select(f => f.ErrorWhere)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
         return first with
         {
             Act = acts.Count == 0 ? first.Act : string.Join(", ", acts),
@@ -98,6 +103,7 @@ public static class FindingGrouper
             ElementNo = elements.Count == 0 ? first.ElementNo : string.Join(", ", elements),
             ValueB = signer ? "" : first.ValueB,
             Explanation = "",
+            ErrorWhere = where.Count == 0 ? "" : string.Join(", ", where),
             Locations = locations,
         };
     }

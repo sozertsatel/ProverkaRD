@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Security.Cryptography.Pkcs;
+using System.Security.Cryptography.X509Certificates;
 using ClosedXML.Excel;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -341,8 +344,8 @@ public class EngineRulesTests
             new RdParser.RdPage(1, "Разраб. Сидоров И.И.\nОбщие данные", ""),
             new RdParser.RdPage(2, "ГИП Павлову В.Г.", ""),
             new RdParser.RdPage(3, "Общие данные\nТепловая сеть\nРазработал Петров П.П.", "Пров. Краснощеком А.Б."),
-            new RdParser.RdPage(4, "Ведомость объемов работ\nИсп. Фролов Я.Я.", ""),
-            new RdParser.RdPage(5, "Ведомость объемов работ\nУтв. Орлов О.О.", "Нач.отд. Смирнов С.С."),
+            new RdParser.RdPage(4, "Ведомость объемов работ\nИсп. Фролов Я.Я.", "Нач.отд. Смирнов С.С."),
+            new RdParser.RdPage(5, "Письмо\nСогласовано Белов А.А.", "Нач.отд. Орлов О.О."),
         };
         var surnames = RdParser.CollectSurnames(pages);
         Assert.Contains(surnames, s => s.Contains("Сидоров", StringComparison.OrdinalIgnoreCase));
@@ -352,8 +355,269 @@ public class EngineRulesTests
         Assert.Contains(surnames, s => s.Contains("Смирнов", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(surnames, s => s.Contains("Петров", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(surnames, s => s.Contains("Орлов", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Белов", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(surnames, s => s.Contains("Общие", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(surnames, s => s.Contains("Тепловая", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Name_words_and_hyphen_parts_are_not_surnames()
+    {
+        var surnames = RdParser.CollectSurnames(
+        [
+            new RdParser.RdPage(1, "Турникетно-кассовый павильон\nКотельная установка\nРазраб. Петров А.А.\nСидоров И.И.", ""),
+            new RdParser.RdPage(2, "ГИП Котельная А.Б.", ""),
+            new RdParser.RdPage(3, "Чертёж", "Разраб. Турникетно-кассовый А.А.Петров"),
+            new RdParser.RdPage(4, "Ведомость объемов работ\nИсп. Фролов Я.Я.", ""),
+            new RdParser.RdPage(5, "Согласовано Белов А.А.", "Нач.отд. Орлов О.О."),
+        ]);
+        Assert.Contains(surnames, s => s.Contains("Петров", StringComparison.Ordinal));
+        Assert.Contains(surnames, s => s.Contains("Сидоров", StringComparison.Ordinal));
+        Assert.Contains(surnames, s => s.Contains("Фролов", StringComparison.Ordinal));
+        Assert.DoesNotContain(surnames, s => s.Contains("Турникетно", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("кассовый", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Котельная", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Белов", StringComparison.Ordinal));
+        Assert.DoesNotContain(surnames, s => s.Contains("Орлов", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Glued_initials_and_surname_are_cut_from_the_element_name()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-glue");
+        var path = Path.Combine(dir.FullName, "100-20-3000-А-КЖ1.docx");
+        try
+        {
+            using (var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document))
+            {
+                var main = doc.AddMainDocumentPart();
+                main.Document = new Document(new Body(
+                    new Paragraph(new Run(new Text("РАБОЧАЯ ДОКУМЕНТАЦИЯ"))),
+                    new Paragraph(new Run(new Text("Опоры"))),
+                    new Paragraph(new Run(new Text("100-20-3000-А-КЖ1"))),
+                    new Paragraph(new Run(new Text("Тестов А.Б."))),
+                    new Paragraph(new Run(new Text("Разраб. Петрову А.Б."))),
+                    new Paragraph(new Run(new Text("Этап 4.10 Сооружения ПК6146+67,00 А.А.Тестов")))));
+                main.Document.Save();
+            }
+
+            var rd = RdParser.Parse(path);
+            Assert.Equal("Сооружения ПК6146+67,00", rd.ElementName);
+            Assert.Contains("Опоры", rd.KitName);
+            Assert.DoesNotContain("Тестов", rd.KitName);
+            Assert.DoesNotContain("Тестов", rd.ElementName);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Name_difference_count_follows_kits_not_unique_text()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-count");
+        try
+        {
+            var verd = Path.Combine(dir.FullName, "verd.xlsx");
+            using (var book = new XLWorkbook())
+            {
+                var sheet = book.AddWorksheet("База");
+                sheet.Cell(1, 1).Value = "Номер элемента";
+                sheet.Cell(1, 2).Value = "Наименование элемента";
+                sheet.Cell(1, 4).Value = "Шифр РД";
+                sheet.Cell(1, 5).Value = "Наименование документации";
+                sheet.Cell(2, 1).Value = "4.10";
+                sheet.Cell(2, 2).Value = "Сооружения";
+                sheet.Cell(2, 4).Value = "100-20-3000-А-КМ1";
+                sheet.Cell(2, 5).Value = "Опоры ПК6013+82";
+                sheet.Cell(3, 4).Value = "100-20-3000-А-КМ2";
+                sheet.Cell(3, 5).Value = "Опоры ПК6013+82";
+                sheet.Cell(4, 4).Value = "100-20-3000-А-КМ3";
+                sheet.Cell(4, 5).Value = "Опоры ПК6013+82";
+                book.SaveAs(verd);
+            }
+
+            var act = Path.Combine(dir.FullName, "РД 4.10.docx");
+            WriteActRows(act, "4.10", "4.10.1.1.1",
+            [
+                ("100-20-3000-А-КМ1", "Опоры ПК6013+82"),
+                ("100-20-3000-А-КМ2", "Опоры ПК6013+82"),
+                ("100-20-3000-А-КМ3", "Опоры ПК6013+82"),
+            ], 1000m);
+            var rd1 = Path.Combine(dir.FullName, "100-20-3000-А-КМ1.docx");
+            var rd2 = Path.Combine(dir.FullName, "100-20-3000-А-КМ2.docx");
+            var rd3 = Path.Combine(dir.FullName, "100-20-3000-А-КМ3.docx");
+            WriteRd(rd1, "100-20-3000-А-КМ1", "Опоры ПК 6013+82", "4.10", "Сооружения");
+            WriteRd(rd2, "100-20-3000-А-КМ2", "Опоры ПК 6013+82", "4.10", "Сооружения");
+            WriteRd(rd3, "100-20-3000-А-КМ3", "Опоры ПК 6013+82", "4.10", "Сооружения");
+
+            var report = new CheckingEngine().Run(new CheckInput
+            {
+                VerdPath = verd,
+                ActPaths = [act],
+                RdPaths = [rd1, rd2, rd3],
+            });
+            Assert.Contains("оформление наименований: 3", report.Acts.Single().CompletenessText);
+            Assert.DoesNotContain("оформление наименований: 1", report.Acts.Single().CompletenessText);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("Чужой текст", "Общий текст", "Общий текст", SourceBlame.InAct)]
+    [InlineData("Общий текст", "Чужой текст", "Общий текст", SourceBlame.InRd)]
+    [InlineData("Общий текст", "Общий текст", "Чужой текст", SourceBlame.InVerd)]
+    [InlineData("Альфа", "Бета", "Гамма", "")]
+    [InlineData("Только акт", "Только РД", "", "")]
+    [InlineData("Одно", "Одно", "Одно", "")]
+    public void Blame_names_the_source_that_breaks_a_pair(string act, string rd, string verd, string expected)
+    {
+        Assert.Equal(expected, SourceBlame.Of(act, rd, verd));
+        Assert.Equal(SourceBlame.InAct, SourceBlame.Of("Опоры.", "Опоры", "Опоры"));
+    }
+
+    [Fact]
+    public void Error_place_is_a_findings_column_and_a_kit_status()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-blame");
+        try
+        {
+            var verd = Path.Combine(dir.FullName, "verd.xlsx");
+            var vesr = Path.Combine(dir.FullName, "vesr.xlsx");
+            using (var book = new XLWorkbook())
+            {
+                var sheet = book.AddWorksheet("База");
+                sheet.Cell(1, 1).Value = "Номер элемента";
+                sheet.Cell(1, 2).Value = "Наименование элемента";
+                sheet.Cell(1, 4).Value = "Шифр РД";
+                sheet.Cell(1, 5).Value = "Наименование документации";
+                sheet.Cell(1, 7).Value = "№ Элемента по ДГП";
+                sheet.Cell(2, 1).Value = "4.10";
+                sheet.Cell(2, 2).Value = "Сооружения";
+                sheet.Cell(2, 7).Value = "4.10.1.1.1";
+                sheet.Cell(2, 4).Value = "100-20-3000-А-КМ1";
+                sheet.Cell(2, 5).Value = "Альфа комплект";
+                sheet.Cell(3, 4).Value = "100-20-3000-А-КМ2";
+                sheet.Cell(3, 5).Value = "Дельта комплект";
+                sheet.Cell(4, 4).Value = "100-20-3000-А-КМ3";
+                sheet.Cell(4, 5).Value = "Второй текст";
+                book.SaveAs(verd);
+            }
+            WriteVesrRowFile(vesr, "4.10.1.1.1", 1000m);
+            var act = Path.Combine(dir.FullName, "РД 4.10.docx");
+            WriteActRows(act, "4.10", "4.10.1.1.1",
+            [
+                ("100-20-3000-А-КМ1", "Альфа комплект"),
+                ("100-20-3000-А-КМ2", "Гамма комплект"),
+                ("100-20-3000-А-КМ3", "Первый текст"),
+            ], 1000m);
+            var rd1 = Path.Combine(dir.FullName, "100-20-3000-А-КМ1.docx");
+            var rd2 = Path.Combine(dir.FullName, "100-20-3000-А-КМ2.docx");
+            var rd3 = Path.Combine(dir.FullName, "100-20-3000-А-КМ3.docx");
+            WriteRd(rd1, "100-20-3000-А-КМ1", "Бета комплект", "4.10", "Сооружения");
+            WriteRd(rd2, "100-20-3000-А-КМ2", "Дельта комплект", "4.10", "Сооружения");
+            WriteRd(rd3, "100-20-3000-А-КМ3", "Третий текст", "4.10", "Сооружения");
+
+            var report = new CheckingEngine().Run(new CheckInput
+            {
+                VerdPath = verd,
+                VesrPath = vesr,
+                ActPaths = [act],
+                RdPaths = [rd1, rd2, rd3],
+            });
+
+            var names = report.Findings.Where(f => f.CheckName == "Наименование комплекта").ToList();
+            Assert.Equal(SourceBlame.InRd, names.Single(f => f.Kit.Contains("КМ1")).ErrorWhere);
+            Assert.Equal(SourceBlame.InAct, names.Single(f => f.Kit.Contains("КМ2")).ErrorWhere);
+            Assert.Equal("", names.Single(f => f.Kit.Contains("КМ3")).ErrorWhere);
+            Assert.Contains("наименования различаются: 3", report.Acts.Single().CompletenessText);
+
+            var reportPath = Path.Combine(dir.FullName, "report.xlsx");
+            ReportWriter.Write(report, reportPath, "0.0.5");
+            using var outBook = new XLWorkbook(reportPath);
+            var findings = outBook.Worksheet("Замечания");
+            Assert.Equal("Где ошибка", findings.Cell(4, 10).GetString());
+            var km1 = Enumerable.Range(5, findings.LastRowUsed()!.RowNumber())
+                .First(r => findings.Cell(r, 4).GetString() == "Наименование комплекта" && findings.Cell(r, 9).GetString().Contains("КМ1"));
+            Assert.Equal(SourceBlame.InRd, findings.Cell(km1, 10).GetString());
+            var kits = outBook.Worksheet("Комплекты");
+            Assert.Contains(SourceBlame.InRd, kits.Cell(6, 11).GetString());
+            Assert.Contains(SourceBlame.InAct, kits.Cell(7, 11).GetString());
+            Assert.Equal("Критично", kits.Cell(8, 11).GetString());
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Misnamed_signature_is_formatting_when_it_signs_the_file()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-sig");
+        var path = Path.Combine(dir.FullName, "100-20-3000-А-АС.docx");
+        try
+        {
+            WriteRd(path, "100-20-3000-А-АС", "Опоры", "4.10", "Сооружения");
+            using var rsa = RSA.Create(2048);
+            var request = new CertificateRequest(
+                new X500DistinguishedName("SN=Тестов, CN=Тестов"),
+                rsa,
+                HashAlgorithmName.SHA256,
+                RSASignaturePadding.Pkcs1);
+            using var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(2));
+            var signed = Detached(File.ReadAllBytes(path), cert);
+            var actualName = "100-20-3000-А-АС-.docx.sig";
+            File.WriteAllBytes(Path.Combine(dir.FullName, actualName), signed);
+            File.WriteAllBytes(Path.Combine(dir.FullName, "чужой.sig"), Detached("другие байты"u8.ToArray(), cert));
+
+            var located = SignatureParser.Locate(path);
+            Assert.NotNull(located);
+            Assert.True(located.Value.NameDiffers);
+            Assert.Equal(actualName, Path.GetFileName(located.Value.Path));
+
+            var exactDir = Directory.CreateTempSubdirectory("proverkard-sig-exact");
+            try
+            {
+                var exactPath = Path.Combine(exactDir.FullName, "100-20-3000-А-АС.docx");
+                File.Copy(path, exactPath);
+                File.WriteAllBytes(exactPath + ".sig", signed);
+                var exact = SignatureParser.Locate(exactPath);
+                Assert.NotNull(exact);
+                Assert.False(exact.Value.NameDiffers);
+            }
+            finally
+            {
+                exactDir.Delete(recursive: true);
+            }
+
+            var report = new CheckingEngine().Run(new CheckInput { RdPaths = [path] });
+            var signature = report.Findings.Where(f => f.CheckName == "Электронная подпись").ToList();
+            var naming = Assert.Single(signature);
+            Assert.Equal(Severity.Formatting, naming.Severity);
+            Assert.Contains("Ошибка оформления: файл подписи назван иначе (" + actualName + ")", naming.InRd);
+            Assert.DoesNotContain(report.Findings, f => f.CheckName == "Электронная подпись" && f.Severity == Severity.Critical);
+
+            File.Delete(Path.Combine(dir.FullName, actualName));
+            var missing = new CheckingEngine().Run(new CheckInput { RdPaths = [path] });
+            Assert.Contains(missing.Findings, f => f.CheckName == "Электронная подпись" && f.Severity == Severity.Critical);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Forced_update_installs_even_when_the_version_matches()
+    {
+        Assert.True(UpdateOffer.ShouldInstall(remoteIsNewer: false, force: true));
+        Assert.False(UpdateOffer.ShouldInstall(remoteIsNewer: false, force: false));
+        Assert.True(UpdateOffer.ShouldInstall(remoteIsNewer: true, force: false));
     }
 
     [Fact]
@@ -545,6 +809,46 @@ public class EngineRulesTests
                 ["Наименование", "Ед. изм.", "Стоимость без НДС", "НДС", "Стоимость с НДС"],
                 [[code + " Рабочая документация. Сооружения", "шт", Money(net), Money(vat), Money(gross)]])));
         main.Document.Save();
+    }
+
+    private static void WriteActRows(string path, string element, string code, (string Cipher, string Name)[] kits, decimal net)
+    {
+        var gross = decimal.Round(net * 1.22m, 2, MidpointRounding.AwayFromZero);
+        var vat = gross - net;
+        static string Money(decimal value) => value.ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+        var rows = kits.Select(kit => new[] { code + " (" + element + ")", kit.Cipher, kit.Name }).ToArray();
+        using var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
+        var main = doc.AddMainDocumentPart();
+        main.Document = new Document(new Body(
+            new Paragraph(new Run(new Text("АКТ № " + element))),
+            Table(
+                ["№ тома", "Шифр", "Наименование документа"],
+                rows),
+            Table(
+                ["Наименование", "Ед. изм.", "Стоимость без НДС", "НДС", "Стоимость с НДС"],
+                [[code + " Рабочая документация. Сооружения", "шт", Money(net), Money(vat), Money(gross)]])));
+        main.Document.Save();
+    }
+
+    private static void WriteVesrRowFile(string path, string code, decimal net)
+    {
+        using var book = new XLWorkbook();
+        var sheet = book.AddWorksheet("ВЭ");
+        sheet.Cell(1, 1).Value = "№ Элемента";
+        sheet.Cell(1, 2).Value = "Наименование";
+        sheet.Cell(1, 3).Value = "Единица измерения";
+        sheet.Cell(1, 4).Value = "Количество";
+        sheet.Cell(1, 5).Value = "на единицу";
+        sheet.Cell(1, 6).Value = "Всего";
+        WriteVesrRow(sheet, 2, code, net);
+        book.SaveAs(path);
+    }
+
+    private static byte[] Detached(byte[] content, X509Certificate2 cert)
+    {
+        var cms = new SignedCms(new ContentInfo(content), detached: true);
+        cms.ComputeSignature(new CmsSigner(cert));
+        return cms.Encode();
     }
 
     private static void WriteRd(string path, string cipher, string kitName, string element, string elementName)

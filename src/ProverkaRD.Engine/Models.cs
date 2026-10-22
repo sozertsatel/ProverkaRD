@@ -43,7 +43,8 @@ public sealed record Finding(
     string InVerd = "",
     string InVesr = "",
     string ActPath = "",
-    IReadOnlyList<FindingPlace>? Locations = null)
+    IReadOnlyList<FindingPlace>? Locations = null,
+    string ErrorWhere = "")
 {
     public IReadOnlyList<FindingPlace> Locations { get; init; } = Locations ?? [];
 
@@ -141,6 +142,7 @@ public sealed class RdDocument
     public string ElementName { get; init; } = "";
     public IReadOnlyList<string> Surnames { get; init; } = [];
     public string? SignaturePath { get; init; }
+    public bool SignatureNameDiffers { get; init; }
     public IReadOnlyList<string> Signers { get; init; } = [];
     public bool SignatureParsed { get; init; }
     public string? SignatureError { get; init; }
@@ -193,10 +195,12 @@ public sealed class KitResult
     public string VerdCipher { get; init; } = "";
     public string TitleCipher { get; init; } = "";
     public Severity CipherStatus { get; init; }
+    public string CipherBlame { get; init; } = "";
     public string DgpCode { get; init; } = "";
     public string ActKitName { get; init; } = "";
     public string VerdKitName { get; init; } = "";
     public Severity NameStatus { get; init; }
+    public string NameBlame { get; init; } = "";
     public string PaperCopies { get; init; } = "";
     public string ElectronicCopies { get; init; } = "";
     public string RdFileName { get; init; } = "";
@@ -209,6 +213,7 @@ public sealed class KitResult
     public string RdElementName { get; init; } = "";
     public Severity RdElementStatus { get; init; }
     public Severity ElementNameStatus { get; init; }
+    public string ElementNameBlame { get; init; } = "";
     public string PdfState { get; init; } = "";
     public string SigState { get; init; } = "";
     public string Surnames { get; init; } = "";
