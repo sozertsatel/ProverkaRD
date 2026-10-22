@@ -12,8 +12,8 @@ public static class SeverityText
 {
     public static string ToRu(Severity severity) => severity switch
     {
-        Severity.Ok => "Совпадает",
-        Severity.Formatting => "Ошибка оформления",
+        Severity.Ok => "ОК",
+        Severity.Formatting => "Оформление",
         Severity.Warning => "Предупреждение",
         Severity.Critical => "Критично",
         _ => "",

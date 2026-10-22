@@ -95,6 +95,7 @@ public sealed class ActDocument
     public IReadOnlyList<ActCostLine> CostLines { get; init; } = [];
     public decimal? AdvanceNet { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = [];
+    public IReadOnlyList<Notice> Notices { get; init; } = [];
 }
 
 public sealed class VerdKit
@@ -116,6 +117,7 @@ public sealed class VerdBook
 {
     public List<VerdElement> Elements { get; } = [];
     public List<string> Errors { get; } = [];
+    public List<Notice> Notices { get; } = [];
 }
 
 public sealed class VesrRow
@@ -132,6 +134,7 @@ public sealed class VesrBook
 {
     public Dictionary<string, VesrRow> ByCode { get; } = new(StringComparer.Ordinal);
     public List<string> Errors { get; } = [];
+    public List<Notice> Notices { get; } = [];
 }
 
 public sealed class RdDocument
@@ -155,6 +158,7 @@ public sealed class RdDocument
     public bool SignatureParsed { get; init; }
     public string? SignatureError { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = [];
+    public IReadOnlyList<Notice> Notices { get; init; } = [];
 }
 
 public sealed class ActResult
@@ -236,6 +240,10 @@ public sealed class KitResult
     public Severity Overall { get; init; }
 }
 
+public sealed record Notice(string Source, string Place, string Message);
+
+public readonly record struct CheckProgress(int Done, int Total, string FileName);
+
 public sealed class CheckReport
 {
     public string? VerdFileName { get; init; }
@@ -244,7 +252,13 @@ public sealed class CheckReport
     public List<KitResult> Kits { get; } = [];
     public List<Finding> Findings { get; } = [];
     public List<string> Problems { get; } = [];
+    public List<Notice> Notices { get; } = [];
     public LoadStats Load { get; set; } = new();
+    public bool VerdMissing { get; set; }
+    public bool VesrMissing { get; set; }
+    public bool VerdUnreadable { get; set; }
+    public bool VesrUnreadable { get; set; }
+    public int LockedFiles { get; set; }
 }
 
 /// <summary>Сколько файлов увидено при загрузке и как они разошлись с актами.</summary>

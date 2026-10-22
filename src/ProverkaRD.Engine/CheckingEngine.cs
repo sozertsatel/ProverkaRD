@@ -13,7 +13,7 @@ public sealed partial class CheckingEngine
     private string _currentActPath = "";
     private CheckOptions _options = new();
 
-    public CheckReport Run(CheckInput input)
+    public CheckReport Run(CheckInput input, IProgress<CheckProgress>? progress = null)
     {
         _findings.Clear();
         _stray.Clear();
@@ -25,31 +25,67 @@ public sealed partial class CheckingEngine
             VerdFileName = NameOf(input.VerdPath),
             VesrFileName = NameOf(input.VesrPath),
         };
+        var total = CountSteps(input);
+        var done = 0;
+        void Tick(string name)
+        {
+            done++;
+            progress?.Report(new CheckProgress(Math.Min(done, Math.Max(total, 1)), Math.Max(total, 1), SafePath.FileName(name)));
+        }
 
         VerdBook? verd = null;
         if (string.IsNullOrWhiteSpace(input.VerdPath))
+        {
+            report.VerdMissing = true;
             report.Problems.Add("ВЭРД не загружена.");
-        else if (!File.Exists(input.VerdPath))
-            report.Problems.Add("Файл ВЭРД не найден: " + input.VerdPath);
+        }
+        else if (!File.Exists(SafePath.ForIo(input.VerdPath)))
+        {
+            report.VerdUnreadable = true;
+            report.Problems.Add("Файл ВЭРД не найден: " + SafePath.FileName(input.VerdPath));
+            Tick(input.VerdPath);
+        }
         else
         {
+            Tick(input.VerdPath);
             verd = VerdParser.Parse(input.VerdPath);
             report.Problems.AddRange(verd.Errors);
+            Absorb(report, "ВЭРД", verd.Notices);
+            if (verd.Errors.Any(FileProblems.IsLockedMessage))
+                report.LockedFiles++;
+            else if (verd.Errors.Count > 0)
+                report.VerdUnreadable = true;
         }
 
         VesrBook? vesr = null;
         if (string.IsNullOrWhiteSpace(input.VesrPath))
+        {
+            report.VesrMissing = true;
             report.Problems.Add("ВЭСР не загружена.");
-        else if (!File.Exists(input.VesrPath))
-            report.Problems.Add("Файл ВЭСР не найден: " + input.VesrPath);
+        }
+        else if (!File.Exists(SafePath.ForIo(input.VesrPath)))
+        {
+            report.VesrUnreadable = true;
+            report.Problems.Add("Файл ВЭСР не найден: " + SafePath.FileName(input.VesrPath));
+            Tick(input.VesrPath);
+        }
         else
         {
+            Tick(input.VesrPath);
             vesr = VesrParser.Parse(input.VesrPath);
             report.Problems.AddRange(vesr.Errors);
+            Absorb(report, "ВЭСР", vesr.Notices);
+            if (vesr.Errors.Any(FileProblems.IsLockedMessage))
+                report.LockedFiles++;
+            else if (vesr.Errors.Count > 0)
+                report.VesrUnreadable = true;
         }
 
         foreach (var problem in report.Problems)
+        {
             Add("—", "—", "Исходные данные", problem, "", Severity.Critical, problem);
+            Remember(report, "Исходные данные", problem, problem);
+        }
 
         var verdByNumber = new Dictionary<string, List<VerdElement>>(StringComparer.Ordinal);
         var verdByCipher = new Dictionary<string, List<VerdHit>>(StringComparer.Ordinal);
@@ -76,31 +112,59 @@ public sealed partial class CheckingEngine
         var acts = new List<ActDocument>();
         foreach (var path in DistinctFiles(input.ActPaths))
         {
+            Tick(path);
             var act = ActParser.Parse(path);
             acts.Add(act);
             foreach (var error in act.Errors)
+            {
                 Add(act.DisplayName, "—", "Чтение акта", error, "", Severity.Critical, error);
+                Remember(report, "Акт", act.FilePath, error);
+            }
+            if (act.Errors.Any(FileProblems.IsLockedMessage))
+                report.LockedFiles++;
+            Absorb(report, "Акт", act.Notices);
         }
 
         var rdFiles = new List<RdDocument>();
         foreach (var path in DistinctFiles(input.RdPaths))
         {
-            if (Directory.Exists(path))
+            Tick(path);
+            if (Directory.Exists(SafePath.ForIo(path)))
+            {
+                Remember(report, "РД", path, "Это папка. Комплекты из неё читаются по списку файлов.");
                 continue;
+            }
             if (path.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
+            {
+                Remember(report, "РД", path, "Файл подписи не является комплектом. Он учитывается при проверке ЭЦП.");
                 continue;
+            }
             if (RdFileRules.IsAuxiliary(path))
+            {
+                Remember(report, "РД", path, "Пропущен вспомогательный файл .СВОР/_ИЗМ.");
                 continue;
+            }
             var rd = RdParser.Parse(path);
             if (RdFileRules.IsStray(rd))
             {
                 _stray.Add(rd);
                 Add("—", "—", "Посторонний файл", rd.FileName, "", Severity.Warning, "");
+                foreach (var error in rd.Errors)
+                    Remember(report, "РД", rd.FileName, error);
+                if (rd.Errors.Any(FileProblems.IsLockedMessage))
+                    report.LockedFiles++;
+                Absorb(report, "РД", rd.Notices);
                 continue;
             }
             rdFiles.Add(rd);
             foreach (var error in rd.Errors)
+            {
                 Add(rd.FileName, rd.Cipher, "Чтение комплекта", error, "", Severity.Critical, error);
+                Remember(report, "РД", rd.FilePath, error);
+            }
+            if (rd.Errors.Any(FileProblems.IsLockedMessage))
+                report.LockedFiles++;
+            Absorb(report, "РД", rd.Notices);
         }
         _rdFilesLoaded = rdFiles.Count > 0;
 
@@ -140,7 +204,7 @@ public sealed partial class CheckingEngine
             .OrderBy(f => ElementOrder.Key(ElementOrder.First(f.ElementNo)), IntArrayComparer.Instance)
             .ThenByDescending(f => f.Severity)
             .ThenBy(f => f.CheckName, StringComparer.CurrentCultureIgnoreCase));
-        report.Load = BuildLoadStats(input, acts, rdFiles, usedRd);
+        report.Load = BuildLoadStats(report, input, acts, rdFiles, usedRd);
         return report;
     }
 
@@ -928,6 +992,7 @@ public sealed partial class CheckingEngine
     }
 
     private LoadStats BuildLoadStats(
+        CheckReport report,
         CheckInput input,
         List<ActDocument> acts,
         List<RdDocument> rdFiles,
@@ -959,7 +1024,11 @@ public sealed partial class CheckingEngine
 
         var strayPdf = _stray.Count(rd => IsPdf(rd.FilePath));
         var strayDocx = _stray.Count(rd => IsDocx(rd.FilePath));
-        var (auxiliary, signatures) = ScanSideFiles(input);
+        var (auxiliaryFiles, signatureFiles) = ScanSideFiles(input);
+        foreach (var file in auxiliaryFiles)
+            Remember(report, "РД", file, "Пропущен вспомогательный файл .СВОР/_ИЗМ.");
+        var auxiliary = auxiliaryFiles.Count;
+        var signatures = signatureFiles.Count;
         var pdfs = matchedPdf + loosePdf + strayPdf;
         var docx = matchedDocx + looseDocx + strayDocx;
         var kits = acts.Sum(act => act.Kits.Count);
@@ -1000,7 +1069,29 @@ public sealed partial class CheckingEngine
         };
     }
 
-    private static (int Auxiliary, int Signatures) ScanSideFiles(CheckInput input)
+    private static int CountSteps(CheckInput input) =>
+        (string.IsNullOrWhiteSpace(input.VerdPath) ? 0 : 1)
+        + (string.IsNullOrWhiteSpace(input.VesrPath) ? 0 : 1)
+        + input.ActPaths.Count(path => !string.IsNullOrWhiteSpace(path))
+        + input.RdPaths.Count(path => !string.IsNullOrWhiteSpace(path));
+
+    private static void Absorb(CheckReport report, string source, IEnumerable<Notice> notices)
+    {
+        foreach (var notice in notices)
+            Remember(report, notice.Source.Length == 0 ? source : notice.Source, notice.Place, notice.Message);
+    }
+
+    private static void Remember(CheckReport report, string source, string place, string message)
+    {
+        if (report.Notices.Any(notice =>
+                string.Equals(notice.Source, source, StringComparison.Ordinal)
+                && string.Equals(notice.Place, place, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(notice.Message, message, StringComparison.Ordinal)))
+            return;
+        report.Notices.Add(new Notice(source, place, message));
+    }
+
+    private static (HashSet<string> Auxiliary, HashSet<string> Signatures) ScanSideFiles(CheckInput input)
     {
         var signatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var auxiliary = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1010,9 +1101,9 @@ public sealed partial class CheckingEngine
         {
             if (string.IsNullOrWhiteSpace(path))
                 continue;
-            if (Directory.Exists(path))
+            if (Directory.Exists(SafePath.ForIo(path)))
                 ScanDirectory(path, recursive: true, signatures, auxiliary);
-            else if (File.Exists(path))
+            else if (File.Exists(SafePath.ForIo(path)))
             {
                 var parent = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(parent))
@@ -1020,17 +1111,18 @@ public sealed partial class CheckingEngine
             }
         }
 
-        return (auxiliary.Count, signatures.Count);
+        return (auxiliary, signatures);
     }
 
     private static void ScanDirectory(string directory, bool recursive, HashSet<string> signatures, HashSet<string> auxiliary)
     {
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        var root = SafePath.ForIo(directory);
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
             return;
         try
         {
             var option = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-            foreach (var file in Directory.EnumerateFiles(directory, "*", option))
+            foreach (var file in Directory.EnumerateFiles(root, "*", option))
             {
                 if (file.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
                     signatures.Add(Path.GetFullPath(file));

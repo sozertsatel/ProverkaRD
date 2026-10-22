@@ -1,3 +1,5 @@
+using ProverkaRD.Engine;
+
 namespace ProverkaRD.Engine.Parsing;
 
 /// <summary>
@@ -9,7 +11,7 @@ static class SharedRead
     public static byte[] Bytes(string path)
     {
         using var stream = new FileStream(
-            path,
+            SafePath.ForIo(path),
             FileMode.Open,
             FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete);

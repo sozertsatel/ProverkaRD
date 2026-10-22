@@ -16,16 +16,27 @@ public sealed class SeverityTextConverter : IValueConverter
 
 public sealed class SeverityBrushConverter : IValueConverter
 {
-    public static IBrush Brush(Severity severity) => severity switch
-    {
-        Severity.Critical => new SolidColorBrush(Color.Parse("#F4C7C3")),
-        Severity.Formatting => new SolidColorBrush(Color.Parse("#FFE08A")),
-        Severity.Warning => new SolidColorBrush(Color.Parse("#F8CBAD")),
-        _ => new SolidColorBrush(Color.Parse("#C6EFCE")),
-    };
+    public static IBrush Brush(Severity severity) =>
+        new SolidColorBrush(Color.Parse(SeverityPalette.For(severity)));
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         value is Severity severity ? Brush(severity) : Brushes.Transparent;
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
+public sealed class StateBrushConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        (value as string) switch
+        {
+            "checking" => new SolidColorBrush(Color.Parse("#D6E3F0")),
+            "empty" or "locked" or "missing" => new SolidColorBrush(Color.Parse(SeverityPalette.Warning)),
+            "unreadable" or "failed" => new SolidColorBrush(Color.Parse(SeverityPalette.Critical)),
+            "finished" => new SolidColorBrush(Color.Parse(SeverityPalette.Ok)),
+            _ => new SolidColorBrush(Color.Parse("#E8EEF5")),
+        };
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         throw new NotSupportedException();

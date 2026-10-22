@@ -69,14 +69,26 @@ static class Headless
             return 2;
         }
 
-        var report = new CheckingEngine().Run(new CheckInput
+        var input = new CheckInput
         {
             VerdPath = verd,
             VesrPath = vesr,
             ActPaths = acts,
             RdPaths = rd,
             RdFolders = rdFolders,
-        });
+        };
+        CheckReport report;
+        try
+        {
+            report = new CheckingEngine().Run(input);
+        }
+        catch (Exception ex)
+        {
+            RunLog.Error("Проверка", ex);
+            Console.Error.WriteLine("Проверка не выполнена: " + ex.Message);
+            return 1;
+        }
+        RunLog.Summary(report, input);
         ReportWriter.Write(report, output, AppInfo.Version);
 
         var critical = report.Findings.Count(f => f.Severity == Severity.Critical);
@@ -85,6 +97,8 @@ static class Headless
         Console.WriteLine("Отчёт записан: " + output);
         if (!string.IsNullOrWhiteSpace(report.Load.Text))
             Console.WriteLine(report.Load.Text);
+        foreach (var notice in report.Notices)
+            Console.WriteLine("Пропуск. " + notice.Source + " — " + notice.Place + " — " + notice.Message);
         Console.WriteLine($"Актов: {report.Acts.Count}. Комплектов: {report.Kits.Count}. Критично: {critical}. Оформление: {formatting}. Предупреждения: {warnings}.");
         return 0;
     }

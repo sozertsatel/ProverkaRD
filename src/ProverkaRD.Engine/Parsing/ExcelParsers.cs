@@ -1,5 +1,5 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
+using ProverkaRD.Engine;
 using ClosedXML.Excel;
 
 namespace ProverkaRD.Engine.Parsing;
@@ -13,9 +13,12 @@ public static partial class VerdParser
         {
             using var stream = SharedRead.Stream(path);
             using var wb = new XLWorkbook(stream);
-            var sheet = wb.Worksheets.FirstOrDefault(w =>
-                            w.Name.Contains("База", StringComparison.OrdinalIgnoreCase))
-                        ?? wb.Worksheets.First();
+            var named = wb.Worksheets.FirstOrDefault(w =>
+                w.Name.Contains("База", StringComparison.OrdinalIgnoreCase));
+            if (named is null)
+                book.Notices.Add(new Notice("ВЭРД", SafePath.FileName(path),
+                    "Лист «База» не найден. Читается лист «" + wb.Worksheets.First().Name + "»."));
+            var sheet = named ?? wb.Worksheets.First();
             var header = FindHeader(sheet);
             if (header is null)
             {
@@ -36,8 +39,12 @@ public static partial class VerdParser
                 var pd = Text(sheet, r, cols.Pd);
 
                 if (IndexRow().IsMatch(number) && IndexRow().IsMatch(name))
+                {
+                    book.Notices.Add(new Notice("ВЭРД", "строка " + r, "Пропущена строка-номер " + number + "."));
                     continue;
+                }
 
+                var startedElement = false;
                 if (ElementNo().IsMatch(number.Trim()))
                 {
                     current = new VerdElement
@@ -47,24 +54,29 @@ public static partial class VerdParser
                         DgpCode = dgp.Trim(),
                     };
                     book.Elements.Add(current);
+                    startedElement = true;
                 }
 
-                if (current is null || !LooksLikeCipher(cipher))
-                    continue;
-
-                current.Kits.Add(new VerdKit
+                if (current is not null && LooksLikeCipher(cipher))
                 {
-                    Cipher = TextMatch.CollapseLines(cipher),
-                    Name = kitName,
-                    PdCipher = TextMatch.CollapseLines(pd),
-                });
-                if (current.DgpCode.Length == 0 && dgp.Length > 0)
-                    current.DgpCode = dgp.Trim();
+                    current.Kits.Add(new VerdKit
+                    {
+                        Cipher = TextMatch.CollapseLines(cipher),
+                        Name = kitName,
+                        PdCipher = TextMatch.CollapseLines(pd),
+                    });
+                    if (current.DgpCode.Length == 0 && dgp.Length > 0)
+                        current.DgpCode = dgp.Trim();
+                    continue;
+                }
+
+                if (!startedElement && HasText(number, name, cipher, kitName, dgp, pd))
+                    book.Notices.Add(new Notice("ВЭРД", "строка " + r, "Строка не разобрана и не попала в ведомость."));
             }
         }
         catch (Exception ex)
         {
-            book.Errors.Add("Не удалось прочитать ВЭРД: " + ex.Message);
+            book.Errors.Add(FileProblems.Describe(path, ex));
         }
         return book;
     }
@@ -119,7 +131,7 @@ public static partial class VerdParser
         if (cell.IsEmpty())
             return "";
         if (cell.DataType == XLDataType.Number)
-            return cell.GetDouble().ToString("0.##", CultureInfo.InvariantCulture);
+            return MoneyDecimal.ExcelNumberText(cell.GetDouble());
 
         var text = Text(sheet, row, col);
         return CommaElement().IsMatch(text) ? text.Replace(',', '.') : text;
@@ -137,6 +149,9 @@ public static partial class VerdParser
 
     private static bool LooksLikeCipher(string value) =>
         value.Contains('-') && CipherHint().IsMatch(value);
+
+    private static bool HasText(params string[] values) =>
+        values.Any(value => !string.IsNullOrWhiteSpace(value));
 
     private readonly record struct Columns(int Number, int Name, int Pd, int Cipher, int KitName, int Dgp);
 
@@ -162,9 +177,12 @@ public static partial class VesrParser
         {
             using var stream = SharedRead.Stream(path);
             using var wb = new XLWorkbook(stream);
-            var sheet = wb.Worksheets.FirstOrDefault(w =>
-                            w.Name.Trim().StartsWith("ВЭ", StringComparison.OrdinalIgnoreCase))
-                        ?? wb.Worksheets.First();
+            var named = wb.Worksheets.FirstOrDefault(w =>
+                w.Name.Trim().StartsWith("ВЭ", StringComparison.OrdinalIgnoreCase));
+            if (named is null)
+                book.Notices.Add(new Notice("ВЭСР", SafePath.FileName(path),
+                    "Лист «ВЭ» не найден. Читается лист «" + wb.Worksheets.First().Name + "»."));
+            var sheet = named ?? wb.Worksheets.First();
             var header = FindHeader(sheet);
             if (header is null)
             {
@@ -177,34 +195,51 @@ public static partial class VesrParser
             for (var r = row + 1; r <= last; r++)
             {
                 var code = Text(sheet, r, cols.Code);
-                if (code.Length == 0)
+                var name = Text(sheet, r, cols.Name);
+                if (code.Length == 0 && name.Length == 0)
                     continue;
                 if (code.Contains("элемент", StringComparison.OrdinalIgnoreCase))
+                {
+                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Повтор шапки пропущен."));
                     continue;
-                if (IndexRow().IsMatch(code) && IndexRow().IsMatch(Text(sheet, r, cols.Name)))
+                }
+                if (IndexRow().IsMatch(code) && IndexRow().IsMatch(name))
+                {
+                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Пропущена строка-номер " + code + "."));
                     continue;
+                }
                 if (!StartsWithDigit().IsMatch(code))
+                {
+                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Строка без кода элемента пропущена."));
                     continue;
+                }
 
                 var rowData = new VesrRow
                 {
                     Code = code.Trim(),
-                    Name = Text(sheet, r, cols.Name),
+                    Name = name,
                     Unit = Text(sheet, r, cols.Unit),
-                    Quantity = DecimalOf(sheet, r, cols.Qty),
-                    UnitPrice = DecimalOf(sheet, r, cols.Price),
-                    TotalNet = DecimalOf(sheet, r, cols.Total),
+                    Quantity = cols.Qty > 0 ? MoneyDecimal.ReadQuantity(sheet.Cell(r, cols.Qty)) : null,
+                    UnitPrice = ReadMoneyCell(book, sheet, r, cols.Price),
+                    TotalNet = ReadMoneyCell(book, sheet, r, cols.Total),
                 };
                 var key = TextMatch.CodeKey(rowData.Code);
                 if (key.Length == 0)
+                {
+                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Код элемента пустой после нормализации."));
                     continue;
-                if (!book.ByCode.ContainsKey(key))
-                    book.ByCode[key] = rowData;
+                }
+                if (book.ByCode.ContainsKey(key))
+                {
+                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Повтор кода " + code.Trim() + " пропущен, оставлена первая строка."));
+                    continue;
+                }
+                book.ByCode[key] = rowData;
             }
         }
         catch (Exception ex)
         {
-            book.Errors.Add("Не удалось прочитать ВЭСР: " + ex.Message);
+            book.Errors.Add(FileProblems.Describe(path, ex));
         }
         return book;
     }
@@ -258,25 +293,25 @@ public static partial class VesrParser
         return TextMatch.StripInvisible(cell.GetFormattedString()).Replace('\u00A0', ' ').Trim();
     }
 
-    private static decimal? DecimalOf(IXLWorksheet sheet, int row, int col)
+    private static decimal? ReadMoneyCell(VesrBook book, IXLWorksheet sheet, int row, int col)
     {
         if (col <= 0)
             return null;
         var cell = sheet.Cell(row, col);
         if (cell.IsEmpty())
             return null;
-        if (cell.DataType == XLDataType.Number)
+        try
         {
-            try
-            {
-                return Math.Round(cell.GetValue<decimal>(), 2, MidpointRounding.AwayFromZero);
-            }
-            catch
-            {
-                return (decimal)Math.Round(cell.GetDouble(), 2, MidpointRounding.AwayFromZero);
-            }
+            var money = MoneyDecimal.ReadMoney(cell);
+            if (money is null)
+                book.Notices.Add(new Notice("ВЭСР", cell.Address.ToString() ?? "", "Ячейка не разобрана как сумма."));
+            return money;
         }
-        return TextMatch.ParseMoney(cell.GetFormattedString());
+        catch (Exception ex)
+        {
+            book.Notices.Add(new Notice("ВЭСР", cell.Address.ToString() ?? "", "Ячейка не разобрана как сумма: " + ex.Message));
+            return null;
+        }
     }
 
     private readonly record struct Columns(int Code, int Name, int Unit, int Qty, int Price, int Total);

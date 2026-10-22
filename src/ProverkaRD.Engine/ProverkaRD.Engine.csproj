@@ -6,6 +6,9 @@
     <Description>Движок сверки рабочей документации: акты, ВЭРД, ВЭСР, комплекты и ЭЦП.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="ProverkaRD.Engine.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.105.0" />
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.2.0" />
     <PackageReference Include="PdfPig" Version="0.1.16" />

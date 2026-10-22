@@ -300,6 +300,12 @@ public static partial class TextMatch
 
     public static decimal? ParseMoney(string? raw)
     {
+        var parsed = ParseDecimal(raw);
+        return parsed is null ? null : MoneyDecimal.Kopecks(parsed.Value);
+    }
+
+    public static decimal? ParseDecimal(string? raw)
+    {
         if (string.IsNullOrWhiteSpace(raw))
             return null;
 

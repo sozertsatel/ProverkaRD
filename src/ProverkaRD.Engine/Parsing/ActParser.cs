@@ -1,3 +1,4 @@
+using ProverkaRD.Engine;
 using System.Text;
 using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
@@ -11,6 +12,7 @@ public static partial class ActParser
     public static ActDocument Parse(string path)
     {
         var errors = new List<string>();
+        var notices = new List<Notice>();
         var kits = new List<ActKit>();
         var costs = new List<ActCostLine>();
         string? headingNo = null;
@@ -25,6 +27,8 @@ public static partial class ActParser
 
             var prose = string.Join("\n", body.Descendants<Paragraph>().Select(ParagraphText));
             advance = AdvancePayment.Parse(prose);
+            if (advance is decimal paid)
+                advance = MoneyDecimal.Kopecks(paid);
             var paragraphs = body.Elements<Paragraph>().Select(ParagraphText).ToList();
             foreach (var paragraph in paragraphs)
             {
@@ -45,18 +49,22 @@ public static partial class ActParser
                 if (flat.Contains("Шифр", StringComparison.OrdinalIgnoreCase)
                     && flat.Contains("том", StringComparison.OrdinalIgnoreCase))
                 {
-                    kits.AddRange(ReadKits(rows));
+                    kits.AddRange(ReadKits(rows, notices));
                 }
                 else if (flat.Contains("НДС", StringComparison.OrdinalIgnoreCase)
                          && flat.Contains("Наименование", StringComparison.OrdinalIgnoreCase))
                 {
-                    costs.AddRange(ReadCosts(rows));
+                    costs.AddRange(ReadCosts(rows, notices));
+                }
+                else if (flat.Any(ch => !char.IsWhiteSpace(ch)))
+                {
+                    notices.Add(new Notice("Акт", SafePath.FileName(path), "Таблица не разобрана и не попала ни в комплекты, ни в стоимость."));
                 }
             }
         }
         catch (Exception ex)
         {
-            errors.Add("Не удалось прочитать акт: " + ex.Message);
+            errors.Add(FileProblems.Describe(path, ex));
         }
 
         return new ActDocument
@@ -68,6 +76,7 @@ public static partial class ActParser
             CostLines = costs,
             AdvanceNet = advance,
             Errors = errors,
+            Notices = notices,
         };
     }
 
@@ -78,7 +87,7 @@ public static partial class ActParser
         return match.Success ? match.Groups[1].Value : null;
     }
 
-    private static List<ActKit> ReadKits(List<List<Cell>> rows)
+    private static List<ActKit> ReadKits(List<List<Cell>> rows, List<Notice> notices)
     {
         var headerIndex = rows.FindIndex(r => r.Any(c =>
             c.Text.Contains("Шифр", StringComparison.OrdinalIgnoreCase)));
@@ -103,7 +112,11 @@ public static partial class ActParser
         {
             var cipher = CellText(row, cipherCol);
             if (cipher.Length == 0 || cipher.Contains("шифр", StringComparison.OrdinalIgnoreCase))
+            {
+                if (row.Any(cell => !string.IsNullOrWhiteSpace(cell.Text)))
+                    notices.Add(new Notice("Акт", "комплекты", "Строка без шифра пропущена."));
                 continue;
+            }
             var volume = CellText(row, volumeCol);
             var codeMatch = LeadingCode().Match(volume.Trim());
             var bracket = BracketNo().Match(volume);
@@ -121,7 +134,7 @@ public static partial class ActParser
         return kits;
     }
 
-    private static List<ActCostLine> ReadCosts(List<List<Cell>> rows)
+    private static List<ActCostLine> ReadCosts(List<List<Cell>> rows, List<Notice> notices)
     {
         var headerIndex = -1;
         for (var i = 0; i < rows.Count; i++)
@@ -166,9 +179,16 @@ public static partial class ActParser
         {
             var rawName = CellText(row, nameCol);
             if (rawName.Length == 0)
+            {
+                if (row.Any(cell => !string.IsNullOrWhiteSpace(cell.Text)))
+                    notices.Add(new Notice("Акт", "стоимость", "Строка без наименования пропущена."));
                 continue;
+            }
             if (rawName.Contains("наименование", StringComparison.OrdinalIgnoreCase))
+            {
+                notices.Add(new Notice("Акт", "стоимость", "Повтор шапки пропущен."));
                 continue;
+            }
 
             var keptName = TextMatch.StrictKey(rawName);
             var isTotal = keptName.Contains("итого", StringComparison.OrdinalIgnoreCase);
@@ -177,9 +197,9 @@ public static partial class ActParser
             var name = codeMatch.Success ? codeMatch.Groups["name"].Value.Trim() : keptName;
             name = name.TrimStart('.', ' ').Trim();
 
-            decimal? net = netCol >= 0 ? TextMatch.ParseMoney(CellText(row, netCol)) : null;
-            decimal? vat = vatCol >= 0 ? TextMatch.ParseMoney(CellText(row, vatCol)) : null;
-            decimal? gross = grossCol >= 0 ? TextMatch.ParseMoney(CellText(row, grossCol)) : null;
+            decimal? net = MoneyOf(row, netCol, notices);
+            decimal? vat = MoneyOf(row, vatCol, notices);
+            decimal? gross = MoneyOf(row, grossCol, notices);
             if (net is null || vat is null || gross is null)
             {
                 var moneys = row.Select(c => TextMatch.ParseMoney(c.Text))
@@ -203,7 +223,7 @@ public static partial class ActParser
                 }
             }
 
-            decimal? qty = qtyCol >= 0 ? TextMatch.ParseMoney(CellText(row, qtyCol)) : null;
+            decimal? qty = qtyCol >= 0 ? TextMatch.ParseDecimal(CellText(row, qtyCol)) : null;
             lines.Add(new ActCostLine
             {
                 RawName = keptName,
@@ -218,6 +238,23 @@ public static partial class ActParser
             });
         }
         return lines;
+    }
+
+    private static decimal? MoneyOf(List<Cell> row, int col, List<Notice> notices)
+    {
+        if (col < 0)
+            return null;
+        var text = CellText(row, col);
+        var parsed = TextMatch.ParseMoney(text);
+        if (parsed is null && UnparsedAmount(text))
+            notices.Add(new Notice("Акт", "стоимость", "Ячейка стоимости не разобрана как сумма."));
+        return parsed is null ? null : MoneyDecimal.Kopecks(parsed.Value);
+    }
+
+    private static bool UnparsedAmount(string text)
+    {
+        var trimmed = text.Trim();
+        return trimmed.Length > 0 && trimmed is not "-" and not "—" and not "–";
     }
 
     private static int Column(IEnumerable<Cell> header, params string[] needles)
