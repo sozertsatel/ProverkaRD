@@ -18,7 +18,7 @@
                 <StackPanel Spacing="4">
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <TextBlock Text="Проверка РД" FontSize="28" FontWeight="Bold" Foreground="White"/>
-                        <TextBlock x:Name="VersionText" Text="0.0.5" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+                        <TextBlock x:Name="VersionText" Text="0.0.6" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
                     </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -29,15 +29,27 @@
         </Border>
 
         <Border DockPanel.Dock="Top" Background="White" Padding="18,12" BorderBrush="#E2E7EE" BorderThickness="0,0,0,1">
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="24">
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                    <Button Content="Загрузить ВЭРД" Click="OnLoadVerd" IsEnabled="{Binding CanRun}"/>
-                    <TextBlock Text="{Binding VerdCaption}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="420"/>
-                </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
-                    <Button Content="Загрузить ВЭСР" Click="OnLoadVesr" IsEnabled="{Binding CanRun}"/>
-                    <TextBlock Text="{Binding VesrCaption}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="420"/>
-                </StackPanel>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+                <Border Background="#F7F9FC" BorderBrush="#D5DDE8" BorderThickness="1" CornerRadius="8" Padding="10,8"
+                        DragDrop.AllowDrop="True" DragDrop.DragOver="OnExcelDragOver" DragDrop.Drop="OnVerdDrop">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button Content="Загрузить ВЭРД" Click="OnLoadVerd" IsEnabled="{Binding CanRun}"/>
+                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Foreground="#5C6B7A" FontSize="12" Text="Перетащите сюда xlsx"/>
+                            <TextBlock Text="{Binding VerdCaption}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="420"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="1" Background="#F7F9FC" BorderBrush="#D5DDE8" BorderThickness="1" CornerRadius="8" Padding="10,8"
+                        DragDrop.AllowDrop="True" DragDrop.DragOver="OnExcelDragOver" DragDrop.Drop="OnVesrDrop">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button Content="Загрузить ВЭСР" Click="OnLoadVesr" IsEnabled="{Binding CanRun}"/>
+                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Foreground="#5C6B7A" FontSize="12" Text="Перетащите сюда xlsx"/>
+                            <TextBlock Text="{Binding VesrCaption}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="420"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
             </Grid>
         </Border>
 
@@ -184,7 +196,8 @@
                                 <DataGridTextColumn Header="В РД" Binding="{Binding InRd}" Width="220"/>
                                 <DataGridTextColumn Header="В ВЭРД" Binding="{Binding InVerd}" Width="220"/>
                                 <DataGridTextColumn Header="В ВЭСР" Binding="{Binding InVesr}" Width="220"/>
-                                <DataGridTextColumn Header="Где" Binding="{Binding Places}" Width="360"/>
+                                <DataGridTextColumn Header="Где" Binding="{Binding Places}" Width="280"/>
+                                <DataGridTextColumn Header="Где ошибка" Binding="{Binding ErrorWhere}" Width="280"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </TabItem>

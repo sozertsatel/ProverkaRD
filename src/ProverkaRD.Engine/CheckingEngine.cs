@@ -89,6 +89,11 @@ public sealed partial class CheckingEngine
             if (RdFileRules.IsAuxiliary(path))
                 continue;
             var rd = RdParser.Parse(path);
+            if (RdFileRules.IsStray(rd))
+            {
+                Add("—", "—", "Посторонний файл", rd.FileName, "", Severity.Warning, "");
+                continue;
+            }
             rdFiles.Add(rd);
             foreach (var error in rd.Errors)
                 Add(rd.FileName, rd.Cipher, "Чтение комплекта", error, "", Severity.Critical, error);

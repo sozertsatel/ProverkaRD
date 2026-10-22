@@ -84,6 +84,18 @@ public partial class MainWindow : Window
     private void OnRdDrop(object? sender, DragEventArgs e) => DropInto(e, _model.AddRd);
     private void OnActDrop(object? sender, DragEventArgs e) => DropInto(e, _model.AddAct);
 
+    private void OnExcelDragOver(object? sender, DragEventArgs e)
+    {
+        e.DragEffects = e.DataTransfer.Contains(DataFormat.File) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnVerdDrop(object? sender, DragEventArgs e) =>
+        DropWorkbook(e, path => _model.VerdPath = path, "ВЭРД");
+
+    private void OnVesrDrop(object? sender, DragEventArgs e) =>
+        DropWorkbook(e, path => _model.VesrPath = path, "ВЭСР");
+
     private async void OnCheck(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (!_model.CanRun)
@@ -201,6 +213,31 @@ public partial class MainWindow : Window
             if (path is not null)
                 add(path);
         }
+    }
+
+    private void DropWorkbook(DragEventArgs e, Action<string> set, string title)
+    {
+        var files = e.DataTransfer.TryGetFiles();
+        if (files is null)
+            return;
+        var paths = files.Select(file => file.TryGetLocalPath()).Where(path => path is not null).Cast<string>().ToList();
+        if (paths.Count == 0)
+            return;
+        if (paths.Any(Directory.Exists))
+        {
+            _model.StatusText = title + ": перетащите файл .xlsx, а не папку.";
+            return;
+        }
+
+        var workbook = paths.FirstOrDefault(path => path.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase));
+        if (workbook is null)
+        {
+            _model.StatusText = title + ": нужен файл .xlsx.";
+            return;
+        }
+
+        set(workbook);
+        _model.StatusText = title + ": " + Path.GetFileName(workbook);
     }
 }
 
@@ -348,7 +385,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
             FilteredActs.Add(act);
         foreach (var kit in _report.Kits.Where(k => Hits(needle, k.Cipher, k.ActName, k.ElementNo, k.Surnames, k.Signers, k.ActKitName, k.RdElementName)))
             FilteredKits.Add(kit);
-        foreach (var finding in _report.Findings.Where(f => Hits(needle, f.Act, f.Kit, f.ElementNo, f.CheckName, f.ValueA, f.ValueB, f.InAct, f.InRd, f.InVerd, f.InVesr, f.Places)))
+        foreach (var finding in _report.Findings.Where(f => Hits(needle, f.Act, f.Kit, f.ElementNo, f.CheckName, f.ValueA, f.ValueB, f.InAct, f.InRd, f.InVerd, f.InVesr, f.Places, f.ErrorWhere)))
             FilteredFindings.Add(finding);
     }
 
