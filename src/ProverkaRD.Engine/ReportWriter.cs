@@ -46,6 +46,12 @@ public static class ReportWriter
         sheet.Range(3, 1, 3, headers.Length).Merge();
         sheet.Cell(3, 1).Style.Alignment.WrapText = true;
 
+        sheet.Cell(4, 1).Value = report.Load.Text;
+        sheet.Range(4, 1, 4, headers.Length).Merge();
+        sheet.Cell(4, 1).Style.Alignment.WrapText = true;
+        sheet.Cell(4, 1).Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+        sheet.Row(4).Height = 36;
+
         const int headerRow = 5;
         for (var i = 0; i < headers.Length; i++)
             sheet.Cell(headerRow, i + 1).Value = headers[i];

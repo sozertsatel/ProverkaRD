@@ -15,6 +15,9 @@ public sealed class AppSettings
     public bool GroupDuplicateFindings { get; set; } = true;
     public bool CheckUpdatesOnStart { get; set; } = true;
 
+    /// <summary>Ставка НДС в процентах. 22 — ставка РФ с 2026 года. 0 — это 0%, а не «не задано».</summary>
+    public decimal VatPercent { get; set; } = 22m;
+
     public CheckOptions ToOptions() => new()
     {
         IgnoredSigners = IgnoredSigners
@@ -24,6 +27,7 @@ public sealed class AppSettings
             .ToList(),
         GroupSignerWarnings = GroupSignerWarnings,
         GroupDuplicateFindings = GroupDuplicateFindings,
+        VatPercent = VatPercent,
     };
 
     public static AppSettings Load()

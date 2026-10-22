@@ -9,21 +9,60 @@ using BcCertificate = Org.BouncyCastle.X509.X509Certificate;
 
 namespace ProverkaRD.Engine.Parsing;
 
-public readonly record struct SignatureLocation(string Path, bool NameDiffers);
+public readonly record struct SignatureLocation(
+    string Path,
+    bool NameDiffers,
+    bool ExactRejected = false,
+    string? ExactName = null,
+    string? CoveringName = null);
 
 public static partial class SignatureParser
 {
     public static string? FindSignature(string documentPath) => Locate(documentPath)?.Path;
 
     /// <summary>
-    /// Сначала файл с точным именем. Если его нет — любая .sig в той же папке,
-    /// которая отсоединённой подписью CMS покрывает байты документа.
+    /// Подпись сверяется с байтами файла всегда, в том числе когда имя .sig точное.
+    /// Точное имя есть, но подпись чужая — ExactRejected. Если точного имени нет,
+    /// берётся другая .sig в папке, которая покрывает файл (NameDiffers).
     /// </summary>
     public static SignatureLocation? Locate(string documentPath)
     {
+        var named = FindNamedSignature(documentPath);
+        byte[] document;
+        try
+        {
+            document = SharedRead.Bytes(documentPath);
+        }
+        catch
+        {
+            return named is null ? null : new SignatureLocation(named, false);
+        }
+
+        if (named is not null && Signs(document, named))
+            return new SignatureLocation(named, false);
+
+        var covering = FindCoveringSignature(documentPath, document, named);
+        if (named is not null)
+        {
+            return new SignatureLocation(
+                covering ?? named,
+                false,
+                ExactRejected: true,
+                ExactName: Path.GetFileName(named),
+                CoveringName: covering is null ? null : Path.GetFileName(covering));
+        }
+
+        if (covering is not null)
+            return new SignatureLocation(covering, true);
+
+        return null;
+    }
+
+    private static string? FindNamedSignature(string documentPath)
+    {
         var exact = documentPath + ".sig";
         if (File.Exists(exact))
-            return new SignatureLocation(exact, false);
+            return exact;
 
         var directory = Path.GetDirectoryName(documentPath);
         if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
@@ -33,25 +72,26 @@ public static partial class SignatureParser
         foreach (var file in Directory.EnumerateFiles(directory))
         {
             if (Path.GetFileName(file).Equals(expected, StringComparison.OrdinalIgnoreCase))
-                return new SignatureLocation(file, false);
+                return file;
         }
 
-        byte[] document;
-        try
-        {
-            document = SharedRead.Bytes(documentPath);
-        }
-        catch
-        {
+        return null;
+    }
+
+    private static string? FindCoveringSignature(string documentPath, byte[] document, string? except)
+    {
+        var directory = Path.GetDirectoryName(documentPath);
+        if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
             return null;
-        }
 
         foreach (var file in Directory.EnumerateFiles(directory))
         {
             if (!Path.GetExtension(file).Equals(".sig", StringComparison.OrdinalIgnoreCase))
                 continue;
+            if (except is not null && string.Equals(Path.GetFullPath(file), Path.GetFullPath(except), StringComparison.OrdinalIgnoreCase))
+                continue;
             if (Signs(document, file))
-                return new SignatureLocation(file, true);
+                return file;
         }
 
         return null;

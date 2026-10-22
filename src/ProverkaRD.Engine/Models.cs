@@ -5,6 +5,8 @@ public sealed class CheckOptions
     public IReadOnlyList<string> IgnoredSigners { get; init; } = [];
     public bool GroupSignerWarnings { get; init; } = true;
     public bool GroupDuplicateFindings { get; init; } = true;
+    /// <summary>Ставка НДС в процентах. 22 — ставка РФ с 2026 года.</summary>
+    public decimal VatPercent { get; init; } = 22m;
 }
 
 public sealed class CheckInput
@@ -13,6 +15,8 @@ public sealed class CheckInput
     public string? VesrPath { get; init; }
     public IReadOnlyList<string> ActPaths { get; init; } = [];
     public IReadOnlyList<string> RdPaths { get; init; } = [];
+    /// <summary>Папки, из которых взяты комплекты. Нужны для подсчёта .sig и пропущенных .СВОР/_ИЗМ.</summary>
+    public IReadOnlyList<string> RdFolders { get; init; } = [];
     public CheckOptions Options { get; init; } = new();
 }
 
@@ -143,6 +147,10 @@ public sealed class RdDocument
     public IReadOnlyList<string> Surnames { get; init; } = [];
     public string? SignaturePath { get; init; }
     public bool SignatureNameDiffers { get; init; }
+    /// <summary>Рядом лежит .sig с ожидаемым именем, но она не покрывает этот файл.</summary>
+    public bool SignatureRejected { get; init; }
+    public string? RejectedSignatureName { get; init; }
+    public string? CoveringSignatureName { get; init; }
     public IReadOnlyList<string> Signers { get; init; } = [];
     public bool SignatureParsed { get; init; }
     public string? SignatureError { get; init; }
@@ -169,9 +177,13 @@ public sealed class ActResult
     public decimal? VesrNet { get; init; }
     public Severity NetStatus { get; init; }
     public decimal? ActVat { get; init; }
+    public decimal? VatRecalculated { get; init; }
+    public Severity VatStatus { get; init; }
     public decimal? ActGross { get; init; }
     public decimal? GrossRecalculated { get; init; }
     public Severity GrossStatus { get; init; }
+    public decimal? VesrUnitPrice { get; init; }
+    public Severity UnitPriceStatus { get; init; }
     public int ActKitCount { get; init; }
     public int VerdKitCount { get; init; }
     public string CompletenessText { get; init; } = "";
@@ -232,4 +244,23 @@ public sealed class CheckReport
     public List<KitResult> Kits { get; } = [];
     public List<Finding> Findings { get; } = [];
     public List<string> Problems { get; } = [];
+    public LoadStats Load { get; set; } = new();
+}
+
+/// <summary>Сколько файлов увидено при загрузке и как они разошлись с актами.</summary>
+public sealed class LoadStats
+{
+    public int Acts { get; init; }
+    public int ActSets { get; init; }
+    public int Pdfs { get; init; }
+    public int MatchedPdfs { get; init; }
+    public int LoosePdfs { get; init; }
+    public int StrayPdfs { get; init; }
+    public int Docx { get; init; }
+    public int MatchedDocx { get; init; }
+    public int LooseDocx { get; init; }
+    public int StrayDocx { get; init; }
+    public int Auxiliary { get; init; }
+    public int Signatures { get; init; }
+    public string Text { get; init; } = "";
 }

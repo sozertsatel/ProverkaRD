@@ -13,7 +13,9 @@ public static class ActScore
             act.CostNameStatus,
             act.CodeStatus,
             act.NetStatus,
+            act.VatStatus,
             act.GrossStatus,
+            act.UnitPriceStatus,
             act.CompletenessStatus,
         };
         var critical = 0;

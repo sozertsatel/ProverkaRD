@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
@@ -10,6 +11,7 @@ public partial class SettingsWindow : Window
     private readonly CheckBox _groupDuplicates;
     private readonly CheckBox _updates;
     private readonly TextBox _ignored;
+    private readonly TextBox _vat;
 
     public SettingsWindow() : this(AppSettings.Load())
     {
@@ -22,9 +24,11 @@ public partial class SettingsWindow : Window
         _groupDuplicates = this.FindControl<CheckBox>("GroupDuplicatesBox")!;
         _updates = this.FindControl<CheckBox>("UpdatesBox")!;
         _ignored = this.FindControl<TextBox>("IgnoredBox")!;
+        _vat = this.FindControl<TextBox>("VatBox")!;
         _groupDuplicates.IsChecked = settings.GroupDuplicateFindings;
         _updates.IsChecked = settings.CheckUpdatesOnStart;
         _ignored.Text = string.Join(Environment.NewLine, settings.IgnoredSigners);
+        _vat.Text = settings.VatPercent.ToString("0.##", CultureInfo.GetCultureInfo("ru-RU"));
     }
 
     private async void OnAbout(object? sender, RoutedEventArgs e)
@@ -49,10 +53,22 @@ public partial class SettingsWindow : Window
     {
         _settings.GroupDuplicateFindings = _groupDuplicates.IsChecked == true;
         _settings.CheckUpdatesOnStart = _updates.IsChecked == true;
+        _settings.VatPercent = ReadVat(_vat.Text);
         _settings.IgnoredSigners = (_ignored.Text ?? "")
             .Split(['\r', '\n', ',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         _settings.Save();
+    }
+
+    private static decimal ReadVat(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return 22m;
+        var normalized = text.Trim().Replace(" ", "").Replace(',', '.');
+        if (!decimal.TryParse(normalized, NumberStyles.Number, CultureInfo.InvariantCulture, out var value)
+            || value < 0m || value > 100m)
+            return 22m;
+        return value;
     }
 }

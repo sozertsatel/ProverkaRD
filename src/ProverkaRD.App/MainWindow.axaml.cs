@@ -78,7 +78,7 @@ public partial class MainWindow : Window
     private void OnRemoveAct(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
         _model.RemoveAct(_actList.SelectedItems?.Cast<InputFile>().ToList() ?? []);
 
-    private void OnClearRd(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.RdFiles.Clear();
+    private void OnClearRd(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ClearRd();
     private void OnClearActs(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ActFiles.Clear();
 
     private void OnRdDrop(object? sender, DragEventArgs e) => DropInto(e, _model.AddRd);
@@ -259,6 +259,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
 
     public ObservableCollection<InputFile> RdFiles { get; } = [];
     public ObservableCollection<InputFile> ActFiles { get; } = [];
+    public List<string> RdFolders { get; } = [];
     public ObservableCollection<ActResult> FilteredActs { get; } = [];
     public ObservableCollection<KitResult> FilteredKits { get; } = [];
     public ObservableCollection<Finding> FilteredFindings { get; } = [];
@@ -332,7 +333,23 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         }
     }
 
-    public void AddRd(string path) => AddPath(path, RdFiles, [".pdf", ".docx"], withSignature: true);
+    public void AddRd(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            var full = Path.GetFullPath(path);
+            if (!RdFolders.Any(folder => string.Equals(folder, full, StringComparison.OrdinalIgnoreCase)))
+                RdFolders.Add(full);
+        }
+
+        AddPath(path, RdFiles, [".pdf", ".docx"], withSignature: true);
+    }
+
+    public void ClearRd()
+    {
+        RdFiles.Clear();
+        RdFolders.Clear();
+    }
     public void AddAct(string path) => AddPath(path, ActFiles, [".docx"], withSignature: false);
 
     public void RemoveRd(IReadOnlyList<InputFile> items)
@@ -355,6 +372,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         VesrPath = VesrPath,
         ActPaths = ActFiles.Select(f => f.Path).ToList(),
         RdPaths = RdFiles.Select(f => f.Path).ToList(),
+        RdFolders = RdFolders.ToList(),
         Options = Options,
     };
 
@@ -365,7 +383,8 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         var formatting = report.Findings.Count(f => f.Severity == Severity.Formatting);
         var warnings = report.Findings.Count(f => f.Severity == Severity.Warning);
         var ok = report.Acts.Count(a => a.Overall == Severity.Ok);
-        SummaryText = $"Актов: {report.Acts.Count} · критично: {critical} · оформление: {formatting} · предупреждения: {warnings} · актов без замечаний: {ok}";
+        var counts = string.IsNullOrWhiteSpace(report.Load.Text) ? "" : report.Load.Text + Environment.NewLine;
+        SummaryText = counts + $"Критично: {critical} · оформление: {formatting} · предупреждения: {warnings} · актов без замечаний: {ok}";
         StatusText = report.Problems.Count > 0
             ? "Проверка завершена. " + report.Problems[0]
             : "Проверка завершена. Цвет строки — худший статус. Подробности на листе «Замечания» и в файле Excel.";

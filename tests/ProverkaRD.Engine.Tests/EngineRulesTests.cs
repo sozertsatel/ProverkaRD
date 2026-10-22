@@ -716,6 +716,7 @@ public class EngineRulesTests
                 var exact = SignatureParser.Locate(exactPath);
                 Assert.NotNull(exact);
                 Assert.False(exact.Value.NameDiffers);
+                Assert.False(exact.Value.ExactRejected);
             }
             finally
             {
@@ -908,6 +909,196 @@ public class EngineRulesTests
         }
     }
 
+    [Fact]
+    public void SameKopecks_has_no_one_kopeck_slack()
+    {
+        Assert.Equal(22m, new CheckOptions().VatPercent);
+        Assert.False(TextMatch.SameKopecks(1000.01m, 1000.00m));
+        Assert.True(TextMatch.MoneyEquals(1000.01m, 1000.00m));
+        Assert.True(TextMatch.SameKopecks(1000.004m, 1000.00m));
+        Assert.True(TextMatch.SameKopecks(1000.005m, 1000.01m));
+    }
+
+    [Fact]
+    public void Vesr_money_matches_act_to_the_kopeck_at_the_configured_rate()
+    {
+        var report = RunMoney(1000m, 1000m, 220m, 1220m);
+        Assert.DoesNotContain(report.Findings, f => f.CheckName is "Стоимость без НДС" or "Стоимость с НДС" or "Сумма НДС" or "Цена за единицу" or "Арифметика акта");
+        var act = report.Acts.Single();
+        Assert.Equal(Severity.Ok, act.NetStatus);
+        Assert.Equal(Severity.Ok, act.GrossStatus);
+        Assert.Equal(Severity.Ok, act.VatStatus);
+        Assert.Equal(Severity.Ok, act.UnitPriceStatus);
+        Assert.Contains("Ставка НДС: 22%", report.Load.Text);
+    }
+
+    [Fact]
+    public void Net_mismatch_of_one_kopeck_is_critical()
+    {
+        var report = RunMoney(1000m, 1000.01m, 220m, 1220m, unitPrice: 1000.01m);
+        var net = Assert.Single(report.Findings, f => f.CheckName == "Стоимость без НДС");
+        Assert.Equal(Severity.Critical, net.Severity);
+        Assert.Equal(TextMatch.FormatMoney(1000.01m), net.InAct);
+        Assert.Equal(TextMatch.FormatMoney(1000m), net.InVesr);
+        Assert.Equal(Severity.Critical, report.Acts.Single().NetStatus);
+        Assert.DoesNotContain(report.Findings, f => f.CheckName is "Стоимость с НДС" or "Сумма НДС" or "Цена за единицу");
+    }
+
+    [Fact]
+    public void Gross_vat_and_unit_price_each_have_their_own_critical_row()
+    {
+        var grossReport = RunMoney(1000m, 1000m, 220m, 1221m);
+        var gross = Assert.Single(grossReport.Findings, f => f.CheckName == "Стоимость с НДС");
+        Assert.Equal(Severity.Critical, gross.Severity);
+        Assert.Equal(TextMatch.FormatMoney(1221m), gross.InAct);
+        Assert.Equal(TextMatch.FormatMoney(1220m), gross.InVesr);
+        Assert.Equal(Severity.Critical, grossReport.Acts.Single().GrossStatus);
+
+        var vatReport = RunMoney(1000m, 1000m, 219m, 1220m);
+        var vat = Assert.Single(vatReport.Findings, f => f.CheckName == "Сумма НДС");
+        Assert.Equal(Severity.Critical, vat.Severity);
+        Assert.Equal(TextMatch.FormatMoney(219m), vat.InAct);
+        Assert.Equal(TextMatch.FormatMoney(220m), vat.InVesr);
+        Assert.Equal(Severity.Critical, vatReport.Acts.Single().VatStatus);
+        Assert.Equal(Severity.Ok, vatReport.Acts.Single().GrossStatus);
+
+        var priceReport = RunMoney(1000m, 1000m, 220m, 1220m, unitPrice: 999m);
+        var price = Assert.Single(priceReport.Findings, f => f.CheckName == "Цена за единицу");
+        Assert.Equal(Severity.Critical, price.Severity);
+        Assert.Equal(TextMatch.FormatMoney(1000m), price.InAct);
+        Assert.Equal(TextMatch.FormatMoney(999m), price.InVesr);
+        Assert.Equal(Severity.Critical, priceReport.Acts.Single().UnitPriceStatus);
+        Assert.Equal(Severity.Ok, priceReport.Acts.Single().NetStatus);
+    }
+
+    [Fact]
+    public void Configured_vat_percent_replaces_the_hardcoded_rate()
+    {
+        var matched = RunMoney(1000m, 1000m, 100m, 1100m, vatPercent: 10m);
+        Assert.DoesNotContain(matched.Findings, f => f.CheckName is "Стоимость с НДС" or "Сумма НДС" or "Арифметика акта");
+        Assert.Equal(Severity.Ok, matched.Acts.Single().GrossStatus);
+        Assert.Equal(Severity.Ok, matched.Acts.Single().VatStatus);
+        Assert.Contains("Ставка НДС: 10%", matched.Load.Text);
+
+        var mismatched = RunMoney(1000m, 1000m, 220m, 1220m, vatPercent: 10m);
+        Assert.Contains(mismatched.Findings, f => f.CheckName == "Стоимость с НДС" && f.Severity == Severity.Critical && f.InVesr == TextMatch.FormatMoney(1100m));
+        Assert.Contains(mismatched.Findings, f => f.CheckName == "Сумма НДС" && f.Severity == Severity.Critical && f.InVesr == TextMatch.FormatMoney(100m));
+    }
+
+    [Fact]
+    public void Exact_signature_that_signs_other_bytes_is_critical()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-sig-wrong");
+        var path = Path.Combine(dir.FullName, "100-20-3000-А-АС.docx");
+        try
+        {
+            WriteRd(path, "100-20-3000-А-АС", "Опоры", "4.10", "Сооружения");
+            using var rsa = RSA.Create(2048);
+            var request = new CertificateRequest(
+                new X500DistinguishedName("SN=Тестов, CN=Тестов"),
+                rsa,
+                HashAlgorithmName.SHA256,
+                RSASignaturePadding.Pkcs1);
+            using var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(2));
+            var coveringName = "другая.pdf.sig";
+            File.WriteAllBytes(path + ".sig", Detached("другие байты"u8.ToArray(), cert));
+            File.WriteAllBytes(Path.Combine(dir.FullName, coveringName), Detached(File.ReadAllBytes(path), cert));
+
+            var located = SignatureParser.Locate(path);
+            Assert.NotNull(located);
+            Assert.True(located.Value.ExactRejected);
+            Assert.False(located.Value.NameDiffers);
+            Assert.Equal(coveringName, located.Value.CoveringName);
+
+            var report = new CheckingEngine().Run(new CheckInput { RdPaths = [path] });
+            var hit = Assert.Single(report.Findings, f => f.CheckName == "Подпись не относится к файлу");
+            Assert.Equal(Severity.Critical, hit.Severity);
+            Assert.Contains("Подпись не относится к файлу", hit.InRd);
+            Assert.Contains(coveringName, hit.InRd);
+            Assert.DoesNotContain(report.Findings, f => (f.ValueA + f.InRd).Contains("файл подписи назван иначе"));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Load_counts_split_pdfs_auxiliary_files_and_signatures()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-counts");
+        try
+        {
+            var act = Path.Combine(dir.FullName, "РД 4.12.docx");
+            WriteAct(act, "4.12", "4.12.1.1.1", "100-20-3000-А-КМ1", 1000m);
+            var matched = Path.Combine(dir.FullName, "100-20-3000-А-КМ1.pdf");
+            var loose = Path.Combine(dir.FullName, "100-20-3000-А-КМ2.pdf");
+            var stray = Path.Combine(dir.FullName, "Письмо.pdf");
+            File.WriteAllBytes(matched, "not a pdf"u8.ToArray());
+            File.WriteAllBytes(loose, "not a pdf"u8.ToArray());
+            File.WriteAllBytes(stray, "not a pdf"u8.ToArray());
+            File.WriteAllBytes(Path.Combine(dir.FullName, "100-20-3000-А-КМ1_ИЗМ.pdf"), "aux"u8.ToArray());
+            File.WriteAllBytes(Path.Combine(dir.FullName, "a.sig"), "sig"u8.ToArray());
+
+            var report = new CheckingEngine().Run(new CheckInput
+            {
+                ActPaths = [act],
+                RdPaths = [matched, loose, stray],
+            });
+
+            Assert.Equal(1, report.Load.Acts);
+            Assert.Equal(1, report.Load.ActSets);
+            Assert.Equal(3, report.Load.Pdfs);
+            Assert.Equal(1, report.Load.MatchedPdfs);
+            Assert.Equal(1, report.Load.LoosePdfs);
+            Assert.Equal(1, report.Load.StrayPdfs);
+            Assert.Equal(1, report.Load.Auxiliary);
+            Assert.Equal(1, report.Load.Signatures);
+            Assert.Contains("Актов: 1", report.Load.Text);
+            Assert.Contains("Комплектов в актах: 1", report.Load.Text);
+            Assert.Contains("найдено PDF: 3", report.Load.Text);
+            Assert.Contains("Из PDF к актам подошло: 1", report.Load.Text);
+            Assert.Contains("«Комплект вне актов»: 1", report.Load.Text);
+            Assert.Contains("«Посторонний файл»: 1", report.Load.Text);
+            Assert.Contains("Пропущено .СВОР/_ИЗМ: 1", report.Load.Text);
+            Assert.Contains("Файлов .sig: 1", report.Load.Text);
+            Assert.DoesNotContain("DOCX:", report.Load.Text);
+
+            var reportPath = Path.Combine(dir.FullName, "report.xlsx");
+            ReportWriter.Write(report, reportPath, "0.0.9");
+            using var book = new XLWorkbook(reportPath);
+            var summary = book.Worksheet("Сводка");
+            Assert.Contains("найдено PDF: 3", summary.Cell(4, 1).GetString());
+            Assert.Equal("Элемент", summary.Cell(5, 1).GetString());
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    private static CheckReport RunMoney(decimal vesrNet, decimal actNet, decimal actVat, decimal actGross, decimal? unitPrice = null, decimal vatPercent = 22m)
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-money");
+        try
+        {
+            var vesr = Path.Combine(dir.FullName, "vesr.xlsx");
+            var act = Path.Combine(dir.FullName, "РД 4.10.docx");
+            WriteVesrRowFile(vesr, "4.10.1.1.1", vesrNet, unitPrice);
+            WriteAct(act, "4.10", "4.10.1.1.1", "100-20-3000-А-КМ1", actNet, vat: actVat, gross: actGross);
+            return new CheckingEngine().Run(new CheckInput
+            {
+                VesrPath = vesr,
+                ActPaths = [act],
+                Options = new CheckOptions { VatPercent = vatPercent },
+            });
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
     private static void WriteVerd(string path)
     {
         using var book = new XLWorkbook();
@@ -949,20 +1140,27 @@ public class EngineRulesTests
         book.SaveAs(path);
     }
 
-    private static void WriteVesrRow(IXLWorksheet sheet, int row, string code, decimal net)
+    private static void WriteVesrRow(IXLWorksheet sheet, int row, string code, decimal net, decimal? unitPrice = null)
     {
         sheet.Cell(row, 1).Value = code;
         sheet.Cell(row, 2).Value = "Рабочая документация. Сооружения";
         sheet.Cell(row, 3).Value = "шт";
         sheet.Cell(row, 4).Value = 1;
+        sheet.Cell(row, 5).Value = unitPrice ?? net;
         sheet.Cell(row, 6).Value = net;
     }
 
-    private static void WriteAct(string path, string element, string code, string cipher, decimal net, string kitName = "Конструкции", bool withAdvance = false)
+    private static void WriteAct(string path, string element, string code, string cipher, decimal net, string kitName = "Конструкции", bool withAdvance = false, decimal? vat = null, decimal? gross = null)
     {
-        var gross = decimal.Round(net * 1.22m, 2, MidpointRounding.AwayFromZero);
-        var vat = gross - net;
-        static string Money(decimal value) => value.ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+        var grossValue = gross ?? decimal.Round(net * 1.22m, 2, MidpointRounding.AwayFromZero);
+        var vatValue = vat ?? grossValue - net;
+        static string Money(decimal value)
+        {
+            var rounded = decimal.Round(value, 2, MidpointRounding.AwayFromZero);
+            return rounded == decimal.Truncate(rounded)
+                ? rounded.ToString("0", System.Globalization.CultureInfo.InvariantCulture)
+                : rounded.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture).Replace('.', ',');
+        }
         using var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document);
         var main = doc.AddMainDocumentPart();
         main.Document = new Document(new Body(
@@ -975,7 +1173,7 @@ public class EngineRulesTests
                 [[code + " (" + element + ")", cipher, kitName]]),
             Table(
                 ["Наименование", "Ед. изм.", "Стоимость без НДС", "НДС", "Стоимость с НДС"],
-                [[code + " Рабочая документация. Сооружения", "шт", Money(net), Money(vat), Money(gross)]])));
+                [[code + " Рабочая документация. Сооружения", "шт", Money(net), Money(vatValue), Money(grossValue)]])));
         main.Document.Save();
     }
 
@@ -998,7 +1196,7 @@ public class EngineRulesTests
         main.Document.Save();
     }
 
-    private static void WriteVesrRowFile(string path, string code, decimal net)
+    private static void WriteVesrRowFile(string path, string code, decimal net, decimal? unitPrice = null)
     {
         using var book = new XLWorkbook();
         var sheet = book.AddWorksheet("ВЭ");
@@ -1008,7 +1206,7 @@ public class EngineRulesTests
         sheet.Cell(1, 4).Value = "Количество";
         sheet.Cell(1, 5).Value = "на единицу";
         sheet.Cell(1, 6).Value = "Всего";
-        WriteVesrRow(sheet, 2, code, net);
+        WriteVesrRow(sheet, 2, code, net, unitPrice);
         book.SaveAs(path);
     }
 

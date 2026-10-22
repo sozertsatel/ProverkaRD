@@ -13,6 +13,10 @@
         <TextBlock TextWrapping="Wrap" Foreground="#5C6B7A"
                    Text="Игнорируемые подписанты не попадают в замечания о фамилии. По одному в строке. Сравнение по основе фамилии: «Павлову» и «Павлов» — один человек."/>
         <TextBox x:Name="IgnoredBox" AcceptsReturn="True" Height="120" TextWrapping="Wrap"/>
+        <TextBlock Text="НДС, %" FontSize="16" FontWeight="SemiBold"/>
+        <TextBlock TextWrapping="Wrap" Foreground="#5C6B7A"
+                   Text="Ставка для сумм акта и пересчёта ВЭСР. С 2026 года в России — 22. Пустое поле или число вне 0–100 возвращает 22. Ноль сохраняется как 0%."/>
+        <TextBox x:Name="VatBox" Width="120" HorizontalAlignment="Left"/>
         <CheckBox x:Name="UpdatesBox" Content="Проверять обновления при запуске"/>
         <Button Content="Принудительное обновление" Click="OnForceUpdate" HorizontalAlignment="Left"/>
         <TextBlock TextWrapping="Wrap" Foreground="#5C6B7A"
