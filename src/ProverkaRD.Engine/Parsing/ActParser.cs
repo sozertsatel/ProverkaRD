@@ -18,7 +18,8 @@ public static partial class ActParser
 
         try
         {
-            using var doc = WordprocessingDocument.Open(path, false);
+            using var stream = SharedRead.Stream(path);
+            using var doc = WordprocessingDocument.Open(stream, false);
             var body = doc.MainDocumentPart?.Document?.Body
                 ?? throw new InvalidDataException("В документе нет тела.");
 

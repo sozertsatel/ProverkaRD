@@ -4,6 +4,7 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
 
 namespace ProverkaRD.Engine.Parsing;
 
@@ -26,9 +27,9 @@ public static partial class RdParser
 
     private static readonly string[] RoleMarkers =
     [
-        "разраб", "проверил", "пров.", "гип", "н.контр", "н. контр", "нормоконтр", "норм.контр",
-        "норм. контр", "нач.отд", "нач. отд", "начальник отдела", "составил", "утверд", "утв.",
-        "гл. спец", "гл.спец", "исполнил", "исп.",
+        "разраб", "проверил", "пров.", "гип", "главный инженер", "н.контр", "н. контр", "нормоконтр", "норм.контр",
+        "норм. контр", "нач.отд", "нач. отд", "начальник отдела", "начальник", "составил", "утверд", "утв.",
+        "гл. спец", "гл.спец", "исполнил", "исп.", "согласован",
     ];
 
     public static RdDocument Parse(string path)
@@ -100,7 +101,8 @@ public static partial class RdParser
 
     private static (string Title, string Full, List<string> Surnames) ReadPdf(string path)
     {
-        using var pdf = PdfDocument.Open(path);
+        using var stream = SharedRead.Stream(path);
+        using var pdf = PdfDocument.Open(stream);
         var pages = new List<RdPage>();
         var title = new StringBuilder();
         var full = new StringBuilder();
@@ -129,23 +131,86 @@ public static partial class RdParser
         return (title.ToString(), full.ToString(), CollectSurnames(pages));
     }
 
-    private static (List<string> Lines, string Stamp) PageLayout(UglyToad.PdfPig.Content.Page page, string fallback)
+    private static (List<string> Lines, string Stamp) PageLayout(Page page, string fallback)
     {
         try
         {
-            var words = page.GetWords().Where(word => !string.IsNullOrWhiteSpace(word.Text)).ToList();
-            if (words.Count == 0)
+            var words = page.GetWords()
+                .Where(word => !string.IsNullOrWhiteSpace(word.Text) && IsHorizontal(word))
+                .ToList();
+            var rotated = ReadRotated(page.Letters);
+            if (words.Count == 0 && rotated.Length == 0)
                 return (SplitLines(fallback), Tail(fallback));
 
             var lines = GroupLines(words);
             var stampWords = words.Where(word => InStamp(word.BoundingBox, page.Width, page.Height)).ToList();
-            var stamp = stampWords.Count == 0 ? Tail(fallback) : string.Join("\n", GroupLines(stampWords));
+            var stamp = stampWords.Count == 0 ? "" : string.Join("\n", GroupLines(stampWords));
+            if (rotated.Length > 0)
+                stamp = stamp.Length == 0 ? rotated : stamp + "\n" + rotated;
+            if (stamp.Length == 0)
+                stamp = Tail(fallback);
             return (lines, stamp);
         }
         catch
         {
             return (SplitLines(fallback), Tail(fallback));
         }
+    }
+
+    private static bool IsHorizontal(Word word) =>
+        word.Letters.Count == 0
+        || word.Letters.All(letter => letter.TextOrientation is TextOrientation.Horizontal or TextOrientation.Rotate180);
+
+    /// <summary>
+    /// Вертикальный штамп PdfPig не собирает в слова: фамилия остаётся набором букв.
+    /// Рамку из отдельных повёрнутых букв в строки титула не подмешиваем.
+    /// </summary>
+    private static string ReadRotated(IEnumerable<Letter> letters)
+    {
+        var rotated = letters
+            .Where(letter => letter.TextOrientation is TextOrientation.Rotate90 or TextOrientation.Rotate270)
+            .Where(letter => !string.IsNullOrEmpty(letter.Value))
+            .ToList();
+        if (rotated.Count == 0)
+            return "";
+
+        var columns = new List<List<Letter>>();
+        foreach (var letter in rotated.OrderBy(item => item.Location.X))
+        {
+            var column = columns.FirstOrDefault(existing => Math.Abs(existing[0].Location.X - letter.Location.X) <= 3.5);
+            if (column is null)
+                columns.Add([letter]);
+            else
+                column.Add(letter);
+        }
+
+        var lines = new List<string>();
+        foreach (var column in columns)
+        {
+            var upward = column[0].TextOrientation == TextOrientation.Rotate270;
+            var ordered = upward
+                ? column.OrderBy(letter => letter.Location.Y).ToList()
+                : column.OrderByDescending(letter => letter.Location.Y).ToList();
+            var sb = new StringBuilder();
+            double previous = double.NaN;
+            foreach (var letter in ordered)
+            {
+                var position = letter.Location.Y;
+                if (!double.IsNaN(previous) && Math.Abs(position - previous) > 8)
+                    sb.Append('\n');
+                sb.Append(letter.Value);
+                previous = position;
+            }
+
+            foreach (var line in sb.ToString().Split('\n'))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length > 0)
+                    lines.Add(trimmed);
+            }
+        }
+
+        return string.Join("\n", lines);
     }
 
     private static bool InStamp(UglyToad.PdfPig.Core.PdfRectangle box, double width, double height)
@@ -188,7 +253,8 @@ public static partial class RdParser
 
     private static string ReadDocx(string path)
     {
-        using var doc = WordprocessingDocument.Open(path, false);
+        using var stream = SharedRead.Stream(path);
+        using var doc = WordprocessingDocument.Open(stream, false);
         var body = doc.MainDocumentPart?.Document?.Body;
         if (body is null)
             return "";
@@ -239,12 +305,16 @@ public static partial class RdParser
             break;
         }
 
+        if (cipher is not null)
+            kitName = AppendTitleContinuation(text, cipher, kitName);
+
         var elementNo = "";
         var elementName = "";
         foreach (Match element in StageElement().Matches(text))
         {
             var number = element.Groups[1].Value;
             var name = TextMatch.CollapseLines(element.Groups[2].Value);
+            name = WrappedHyphen().Replace(name, "$1-$2");
             name = TrimElementTail(name);
             if (name.Length > elementName.Length)
             {
@@ -256,9 +326,55 @@ public static partial class RdParser
         return new TitleInfo(cipher, kitName, elementNo, elementName);
     }
 
+    private static string AppendTitleContinuation(string text, string cipher, string kitName)
+    {
+        var lines = text.Replace('\r', '\n').Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0)
+            .ToList();
+        var index = lines.FindIndex(line => line.Contains(cipher, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+            return kitName;
+
+        var extra = new List<string>();
+        for (var i = index + 1; i < lines.Count && extra.Count < 3; i++)
+        {
+            var line = lines[i];
+            if (IsTitleStop(line))
+                break;
+            if (BoilerplateRegex().IsMatch(line))
+                continue;
+            var lineCipher = FindCipher(line);
+            if (lineCipher is not null && line.Length <= lineCipher.Length + 4)
+                continue;
+            if (kitName.Contains(line, StringComparison.OrdinalIgnoreCase))
+                continue;
+            extra.Add(line);
+        }
+
+        return extra.Count == 0
+            ? kitName
+            : TextMatch.CollapseLines(kitName + " " + string.Join(" ", extra));
+    }
+
+    private static bool IsTitleStop(string line)
+    {
+        var normalized = TextMatch.Normalize(line);
+        if (normalized.StartsWith("этап ", StringComparison.Ordinal))
+            return true;
+        if (normalized.Contains("главный инженер", StringComparison.Ordinal))
+            return true;
+        if (normalized.StartsWith("соответствует", StringComparison.Ordinal))
+            return true;
+        if (normalized.Contains("инв", StringComparison.Ordinal) && normalized.Contains("подл", StringComparison.Ordinal))
+            return true;
+        return IsRoleLine(line);
+    }
+
     private static string TrimElementTail(string name)
     {
         name = ArchiveTail().Replace(name, "").Trim();
+        name = WrappedHyphen().Replace(name, "$1-$2");
         return name.Trim(' ', '.', '-', '–');
     }
 
@@ -274,7 +390,10 @@ public static partial class RdParser
         foreach (var page in pages)
         {
             if (page.Number <= 2)
+            {
                 found.AddRange(SurnamesFromRoleLines(page.Text));
+                found.AddRange(SurnamesOnLines(page.Text));
+            }
 
             found.AddRange(SurnamesFromRoleLines(page.Stamp));
             found.AddRange(BareStampNames(page.Stamp));
@@ -327,7 +446,7 @@ public static partial class RdParser
         foreach (var line in stamp.Replace('\r', '\n').Split('\n'))
         {
             var trimmed = line.Trim();
-            if (trimmed.Length is 0 or > 60 || IsRoleLine(trimmed))
+            if (trimmed.Length == 0 || IsRoleLine(trimmed))
                 continue;
             found.AddRange(SurnamesOnLine(trimmed));
         }
@@ -347,11 +466,19 @@ public static partial class RdParser
                 continue;
             var before = index == 0 || !char.IsLetter(normalized[index - 1]);
             var after = index + token.Length >= normalized.Length || !char.IsLetter(normalized[index + token.Length]);
-            var prefix = token is "разраб" or "утверд" or "исполн" or "нормоконтр" or "составил" or "проверил";
+            var prefix = token is "разраб" or "утверд" or "исполн" or "нормоконтр" or "составил" or "проверил" or "начальник" or "согласован";
             if (before && (after || prefix))
                 return true;
         }
         return false;
+    }
+
+    private static List<string> SurnamesOnLines(string text)
+    {
+        var found = new List<string>();
+        foreach (var line in text.Replace('\r', '\n').Split('\n'))
+            found.AddRange(SurnamesOnLine(line));
+        return found;
     }
 
     private static List<string> SurnamesOnLine(string line)
@@ -422,6 +549,9 @@ public static partial class RdParser
 
     [GeneratedRegex(@"\d{3}-\d{2}-\d{4,}-\d+\.\d+")]
     private static partial Regex ArchiveTail();
+
+    [GeneratedRegex(@"([\p{L}])-\s+([\p{L}])")]
+    private static partial Regex WrappedHyphen();
 
     [GeneratedRegex(@"(?<![\p{L}])[А-ЯЁ]\.\s*[А-ЯЁ]\.\s*([А-ЯЁ][а-яё]{2,})")]
     private static partial Regex InitialsThenSurname();
