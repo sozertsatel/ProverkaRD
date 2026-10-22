@@ -32,7 +32,7 @@ public static class SignerAudit
         var missing = new List<string>();
         foreach (var surname in considered)
         {
-            if (usable.Any(signer => SurnameStem.Same(signer, surname)))
+            if (usable.Any(signer => SignerNames.Matches(surname, signer)))
                 continue;
             missing.Add(surname);
         }

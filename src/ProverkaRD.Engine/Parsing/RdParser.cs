@@ -64,6 +64,9 @@ public static partial class RdParser
             title = ExtractTitle(fullText);
         string? signaturePath = null;
         IReadOnlyList<string> signers = [];
+        IReadOnlyList<CertificateSigner> certificateSigners = [];
+        var certStatus = Severity.Ok;
+        var certText = "";
         string? signatureError = null;
         var parsed = false;
         var signatureNameDiffers = false;
@@ -85,6 +88,9 @@ public static partial class RdParser
                     signaturePath = located.Value.Path;
                     var read = SignatureParser.Read(signaturePath);
                     signers = DistinctSurnames(read.Surnames);
+                    certificateSigners = read.People;
+                    certStatus = read.CertStatus;
+                    certText = read.CertValidityText;
                     signatureError = read.Error;
                     parsed = read.Error is null;
                 }
@@ -112,6 +118,9 @@ public static partial class RdParser
             RejectedSignatureName = rejectedSignatureName,
             CoveringSignatureName = coveringSignatureName,
             Signers = signers,
+            CertificateSigners = certificateSigners,
+            CertStatus = certStatus,
+            CertValidityText = certText,
             SignatureParsed = parsed,
             SignatureError = signatureError,
             Errors = errors,
@@ -140,9 +149,9 @@ public static partial class RdParser
                 plain = "";
             }
 
-            var (lines, stamp) = PageLayout(page, plain);
+            var (lines, stamp, cells) = PageLayout(page, plain);
             var text = lines.Count == 0 ? plain : string.Join("\n", lines);
-            pages.Add(new RdPage(index, text, stamp, plain));
+            pages.Add(new RdPage(index, text, stamp, plain, cells));
             full.AppendLine(text);
             if (index <= 2)
                 title.AppendLine(text);
@@ -151,7 +160,7 @@ public static partial class RdParser
         return (title.ToString(), full.ToString(), CollectSurnames(pages));
     }
 
-    private static (List<string> Lines, string Stamp) PageLayout(Page page, string fallback)
+    private static (List<string> Lines, string Stamp, List<string> Cells) PageLayout(Page page, string fallback)
     {
         try
         {
@@ -160,7 +169,7 @@ public static partial class RdParser
                 .ToList();
             var rotated = ReadRotated(page.Letters);
             if (words.Count == 0 && rotated.Length == 0)
-                return (SplitLines(fallback), Tail(fallback));
+                return (SplitLines(fallback), Tail(fallback), []);
 
             var lines = GroupLines(words);
             var stampWords = words.Where(word => InStamp(word.BoundingBox, page.Width, page.Height)).ToList();
@@ -169,11 +178,20 @@ public static partial class RdParser
                 stamp = stamp.Length == 0 ? rotated : stamp + "\n" + rotated;
             if (stamp.Length == 0)
                 stamp = Tail(fallback);
-            return (lines, stamp);
+            var cells = StampForm3.ReadCells(
+                words.Select(word => new StampForm3.StampWord(
+                    word.Text.Trim(),
+                    word.BoundingBox.Left,
+                    word.BoundingBox.Bottom,
+                    word.BoundingBox.Right,
+                    word.BoundingBox.Top)).ToList(),
+                page.Width,
+                page.Height);
+            return (lines, stamp, cells);
         }
         catch
         {
-            return (SplitLines(fallback), Tail(fallback));
+            return (SplitLines(fallback), Tail(fallback), []);
         }
     }
 
@@ -409,7 +427,12 @@ public static partial class RdParser
     }
 
     /// <param name="Raw">Текст PdfPig до сборки слов: в штампе фамилия склеена с первой буквой инициала.</param>
-    public sealed record RdPage(int Number, string Text, string Stamp, string Raw = "");
+    public sealed record RdPage(
+        int Number,
+        string Text,
+        string Stamp,
+        string Raw = "",
+        IReadOnlyList<string>? CoordinateCells = null);
 
     /// <summary>
     /// Фамилии тома: подписные строки двух титулов, графы штампа листов до первого ВОР
@@ -426,6 +449,8 @@ public static partial class RdParser
         {
             if (passedVor)
                 break;
+
+            found.AddRange(SurnamesFromCoordinateCells(page.CoordinateCells, lexicon));
 
             if (page.Number <= 2)
             {
@@ -458,6 +483,36 @@ public static partial class RdParser
 
     public static List<string> ExtractSurnames(string text) =>
         DistinctSurnames(SurnamesFromRoleLines(text, null));
+
+    /// <summary>
+    /// Графа фамилии формы 3. Текст штампа по-прежнему разбирается отдельно и сливается с этим списком.
+    /// </summary>
+    private static List<string> SurnamesFromCoordinateCells(IReadOnlyList<string>? cells, ISet<string> lexicon)
+    {
+        var found = new List<string>();
+        if (cells is null)
+            return found;
+        foreach (var cell in cells)
+        {
+            if (string.IsNullOrWhiteSpace(cell))
+                continue;
+            found.AddRange(SurnamesOnLine(cell, lexicon));
+            found.AddRange(GluedSurnames(cell));
+            foreach (var raw in cell.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                var value = raw.Trim().Trim('"', '«', '»', '.', ',', ';', ':');
+                if (!BareSurname().IsMatch(value))
+                    continue;
+                if (IsRoleLine(value))
+                    continue;
+                if (IsListedName(value, lexicon))
+                    continue;
+                found.Add(value);
+            }
+        }
+
+        return found;
+    }
 
     private static bool IsVorPage(string text)
     {
@@ -613,7 +668,7 @@ public static partial class RdParser
         return plain is "фио" or "подпись" or "подп" or "подписи";
     }
 
-    private static bool IsRoleLine(string line)
+    internal static bool IsRoleLine(string line)
     {
         var normalized = TextMatch.Normalize(line);
         foreach (var marker in RoleMarkers)
@@ -737,4 +792,7 @@ public static partial class RdParser
     // PdfPig режет штамп на «Фамилия», отдельную букву и «.X.».
     [GeneratedRegex(@"(?<![\p{L}\-])([А-ЯЁ][а-яё]{2,})\s+[А-ЯЁ]\s+\.\s*[А-ЯЁ]\s*\.")]
     private static partial Regex SurnameThenSplitInitials();
+
+    [GeneratedRegex(@"^[А-ЯЁ][а-яё]{2,}(?:-[А-ЯЁ][а-яё]{2,})?$")]
+    private static partial Regex BareSurname();
 }

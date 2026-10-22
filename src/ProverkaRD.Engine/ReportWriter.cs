@@ -16,6 +16,7 @@ public static class ReportWriter
         WriteKits(workbook, report, appVersion);
         WriteFindings(workbook, report, appVersion);
         WriteNotices(workbook, report, appVersion);
+        WriteRegistry(workbook, report, appVersion);
         foreach (var sheet in workbook.Worksheets)
         {
             var used = sheet.RangeUsed();
@@ -326,6 +327,59 @@ public static class ReportWriter
         sheet.Column(1).Width = 22;
         sheet.Column(2).Width = 42;
         sheet.Column(3).Width = 88;
+        if (row > headerRow + 1)
+            sheet.Rows(headerRow + 1, row - 1).Style.Alignment.WrapText = true;
+        Outline(sheet, headerRow, 1, Math.Max(row - 1, headerRow), headers.Length);
+    }
+
+    private static void WriteRegistry(XLWorkbook workbook, CheckReport report, string? appVersion)
+    {
+        var sheet = workbook.AddWorksheet("Реестр комплекта");
+        UseFont(sheet);
+        var headers = new[]
+        {
+            "Файл", "Шифр", "Элемент", "Фамилии штампа", "Подписанты .sig", "Сертификат", "Подпись", "Итог",
+        };
+        sheet.Cell(1, 1).Value = Titled("Реестр комплекта", appVersion);
+        sheet.Cell(1, 1).Style.Font.Bold = true;
+        sheet.Cell(1, 1).Style.Font.FontSize = 16;
+        sheet.Range(1, 1, 1, headers.Length).Merge();
+        sheet.Cell(2, 1).Value = "Одна строка — один PDF. Фамилии из граф штампа. Подписанты — ФИО из сертификата .sig. Итог — худший из подписи, срока сертификата и фамилий штампа.";
+        sheet.Range(2, 1, 2, headers.Length).Merge();
+        sheet.Cell(2, 1).Style.Alignment.WrapText = true;
+        sheet.Row(2).Height = 32;
+
+        const int headerRow = 4;
+        for (var i = 0; i < headers.Length; i++)
+            sheet.Cell(headerRow, i + 1).Value = headers[i];
+        StyleHeader(sheet.Range(headerRow, 1, headerRow, headers.Length));
+
+        var row = headerRow + 1;
+        foreach (var item in report.Registry)
+        {
+            sheet.Cell(row, 1).Value = item.FileName;
+            sheet.Cell(row, 2).Value = item.Cipher;
+            sheet.Cell(row, 3).Value = item.Element;
+            sheet.Cell(row, 4).Value = item.Surnames;
+            sheet.Cell(row, 5).Value = item.Signers;
+            sheet.Cell(row, 6).Value = item.CertValidity;
+            Paint(sheet.Cell(row, 6), item.CertStatus);
+            sheet.Cell(row, 6).Style.Font.Bold = item.CertStatus != Severity.Ok;
+            Status(sheet.Cell(row, 7), item.SignatureStatus);
+            Status(sheet.Cell(row, 8), item.Overall);
+            row++;
+        }
+
+        sheet.SheetView.FreezeRows(headerRow);
+        if (report.Registry.Count > 0)
+            sheet.Range(headerRow, 1, row - 1, headers.Length).SetAutoFilter();
+        Widths(sheet, headers.Length);
+        sheet.Column(1).Width = 42;
+        sheet.Column(2).Width = 36;
+        sheet.Column(3).Width = 28;
+        sheet.Column(4).Width = 36;
+        sheet.Column(5).Width = 36;
+        sheet.Column(6).Width = 42;
         if (row > headerRow + 1)
             sheet.Rows(headerRow + 1, row - 1).Style.Alignment.WrapText = true;
         Outline(sheet, headerRow, 1, Math.Max(row - 1, headerRow), headers.Length);

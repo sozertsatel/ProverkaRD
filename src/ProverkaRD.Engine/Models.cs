@@ -155,6 +155,9 @@ public sealed class RdDocument
     public string? RejectedSignatureName { get; init; }
     public string? CoveringSignatureName { get; init; }
     public IReadOnlyList<string> Signers { get; init; } = [];
+    public IReadOnlyList<CertificateSigner> CertificateSigners { get; init; } = [];
+    public Severity CertStatus { get; init; }
+    public string CertValidityText { get; init; } = "";
     public bool SignatureParsed { get; init; }
     public string? SignatureError { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = [];
@@ -242,6 +245,20 @@ public sealed class KitResult
 
 public sealed record Notice(string Source, string Place, string Message);
 
+/// <summary>Одна строка листа «Реестр комплекта»: один PDF.</summary>
+public sealed class RegistryRow
+{
+    public string FileName { get; init; } = "";
+    public string Cipher { get; init; } = "";
+    public string Element { get; init; } = "";
+    public string Surnames { get; init; } = "";
+    public string Signers { get; init; } = "";
+    public string CertValidity { get; init; } = "";
+    public Severity CertStatus { get; init; }
+    public Severity SignatureStatus { get; init; }
+    public Severity Overall { get; init; }
+}
+
 public readonly record struct CheckProgress(int Done, int Total, string FileName);
 
 public sealed class CheckReport
@@ -253,6 +270,7 @@ public sealed class CheckReport
     public List<Finding> Findings { get; } = [];
     public List<string> Problems { get; } = [];
     public List<Notice> Notices { get; } = [];
+    public List<RegistryRow> Registry { get; } = [];
     public LoadStats Load { get; set; } = new();
     public bool VerdMissing { get; set; }
     public bool VesrMissing { get; set; }

@@ -204,6 +204,8 @@ public sealed partial class CheckingEngine
             .OrderBy(f => ElementOrder.Key(ElementOrder.First(f.ElementNo)), IntArrayComparer.Instance)
             .ThenByDescending(f => f.Severity)
             .ThenBy(f => f.CheckName, StringComparer.CurrentCultureIgnoreCase));
+        foreach (var row in BuildRegistry(report, rdFiles))
+            report.Registry.Add(row);
         report.Load = BuildLoadStats(report, input, acts, rdFiles, usedRd);
         return report;
     }
@@ -763,12 +765,14 @@ public sealed partial class CheckingEngine
 
     private (Severity Status, string Missing) AuditSigners(string actLabel, string cipher, RdDocument rd)
     {
+        var signers = MatchSigners(rd);
         var audit = SignerAudit.Check(
             rd.Surnames,
-            rd.Signers,
+            signers,
             rd.SignaturePath is not null,
             rd.SignatureError,
             _options.IgnoredSigners);
+        var status = Severity.Ok;
 
         if (rd.SignatureRejected)
         {
@@ -778,6 +782,7 @@ public sealed partial class CheckingEngine
             if (!string.IsNullOrWhiteSpace(rd.CoveringSignatureName))
                 text += ". Подходит " + rd.CoveringSignatureName;
             Add(actLabel, cipher, "Подпись не относится к файлу", text, "", Severity.Critical, "");
+            status = Severity.Critical;
             if (rd.SignaturePath is null)
                 return (Severity.Critical, "");
         }
@@ -788,6 +793,7 @@ public sealed partial class CheckingEngine
                 "",
                 Severity.Formatting,
                 "");
+            status = Severity.Formatting;
         }
 
         if (rd.SignaturePath is null)
@@ -804,14 +810,131 @@ public sealed partial class CheckingEngine
 
         if (audit.NoSurnames)
         {
-            Add(actLabel, cipher, "Фамилии в комплекте", "", string.Join(", ", rd.Signers), Severity.Critical, "");
-            return (Severity.Critical, "");
+            Add(actLabel, cipher, "Фамилии в комплекте", "", string.Join(", ", signers), Severity.Critical, "");
+            status = Severity.Critical;
+        }
+        else
+        {
+            foreach (var surname in audit.Missing)
+                Add(actLabel, cipher, "Фамилия без подписи", surname, string.Join(", ", signers), Severity.Critical, "");
+            status = SeverityText.Worst(status, audit.Status);
         }
 
-        foreach (var surname in audit.Missing)
-            Add(actLabel, cipher, "Фамилия без подписи", surname, string.Join(", ", rd.Signers), Severity.Critical, "");
+        status = SeverityText.Worst(status, NoteCertificates(actLabel, cipher, rd));
+        return (status, string.Join(", ", audit.Missing));
+    }
 
-        return (audit.Status, string.Join(", ", audit.Missing));
+    private Severity NoteCertificates(string actLabel, string cipher, RdDocument rd)
+    {
+        var status = Severity.Ok;
+        foreach (var person in rd.CertificateSigners)
+        {
+            if (person.TimeStatus == CertTimeStatus.Expired)
+            {
+                Add(actLabel, cipher, "Срок сертификата",
+                    "Сертификат истёк на момент подписания: " + person.DisplayName, "", Severity.Critical, "");
+                status = Severity.Critical;
+            }
+            else if (person.TimeStatus == CertTimeStatus.NotYetValid)
+            {
+                Add(actLabel, cipher, "Срок сертификата",
+                    "Сертификат ещё не действовал на момент подписания: " + person.DisplayName, "", Severity.Critical, "");
+                status = Severity.Critical;
+            }
+            else if (person.TimeStatus == CertTimeStatus.SigningTimeMissing)
+            {
+                Add(actLabel, cipher, "Время подписания",
+                    "В подписи нет времени подписания: " + person.DisplayName, "", Severity.Warning, "");
+                status = SeverityText.Worst(status, Severity.Warning);
+            }
+        }
+
+        return status;
+    }
+
+    private static List<string> MatchSigners(RdDocument rd)
+    {
+        var signers = rd.Signers.ToList();
+        foreach (var person in rd.CertificateSigners)
+        {
+            if (person.MatchKey.Length == 0)
+                continue;
+            if (signers.Any(item => string.Equals(item, person.MatchKey, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            signers.Add(person.MatchKey);
+        }
+
+        return signers;
+    }
+
+    private IEnumerable<RegistryRow> BuildRegistry(CheckReport report, List<RdDocument> rdFiles)
+    {
+        var documents = rdFiles
+            .Concat(_stray)
+            .Where(rd => IsPdf(rd.FilePath))
+            .OrderBy(rd => rd.FileName, StringComparer.CurrentCultureIgnoreCase);
+        foreach (var rd in documents)
+            yield return RegistryOf(report, rd);
+    }
+
+    private RegistryRow RegistryOf(CheckReport report, RdDocument rd)
+    {
+        var elementNo = rd.ElementNo;
+        if (elementNo.Length == 0)
+        {
+            var kit = report.Kits.FirstOrDefault(item =>
+                item.RdFileName.Equals(rd.FileName, StringComparison.OrdinalIgnoreCase)
+                && item.ElementNo.Length > 0);
+            if (kit is not null)
+                elementNo = kit.ElementNo;
+        }
+
+        var elementName = OneLine(rd.ElementName);
+        var element = elementNo.Length == 0
+            ? elementName
+            : elementName.Length == 0 ? elementNo : elementNo + " " + elementName;
+        var signature = SignatureState(rd);
+        var surnames = SurnameState(rd);
+        var cert = rd.CertificateSigners.Count == 0 ? Severity.Ok : rd.CertStatus;
+        var signerText = rd.CertificateSigners.Count == 0
+            ? string.Join(", ", rd.Signers)
+            : string.Join(", ", rd.CertificateSigners.Select(person => person.DisplayName));
+        var certText = rd.CertValidityText;
+        if (certText.Length == 0)
+            certText = "—";
+        return new RegistryRow
+        {
+            FileName = rd.FileName,
+            Cipher = rd.Cipher,
+            Element = element,
+            Surnames = string.Join(", ", rd.Surnames),
+            Signers = signerText,
+            CertValidity = certText,
+            CertStatus = cert,
+            SignatureStatus = signature,
+            Overall = SeverityText.Worst(signature, surnames, cert),
+        };
+    }
+
+    private Severity SurnameState(RdDocument rd)
+    {
+        if (rd.SignaturePath is null || !string.IsNullOrWhiteSpace(rd.SignatureError))
+            return Severity.Critical;
+        return SignerAudit.Check(
+            rd.Surnames,
+            MatchSigners(rd),
+            true,
+            null,
+            _options.IgnoredSigners).Status;
+    }
+
+    private static Severity SignatureState(RdDocument rd)
+    {
+        if (rd.SignatureRejected || rd.SignaturePath is null || !string.IsNullOrWhiteSpace(rd.SignatureError))
+            return Severity.Critical;
+        if (rd.SignatureNameDiffers)
+            return Severity.Formatting;
+        return Severity.Ok;
     }
 
     private void NoteInternalArithmetic(string label, decimal? net, decimal? vat, decimal? gross)
