@@ -126,7 +126,7 @@ public static partial class RdParser
 
             var (lines, stamp) = PageLayout(page, plain);
             var text = lines.Count == 0 ? plain : string.Join("\n", lines);
-            pages.Add(new RdPage(index, text, stamp));
+            pages.Add(new RdPage(index, text, stamp, plain));
             full.AppendLine(text);
             if (index <= 2)
                 title.AppendLine(text);
@@ -392,11 +392,13 @@ public static partial class RdParser
         return TextMatch.CollapseLines(stripped).Trim(' ', ',', ';', ':');
     }
 
-    public sealed record RdPage(int Number, string Text, string Stamp);
+    /// <param name="Raw">Текст PdfPig до сборки слов: в штампе фамилия склеена с первой буквой инициала.</param>
+    public sealed record RdPage(int Number, string Text, string Stamp, string Raw = "");
 
     /// <summary>
     /// Фамилии тома: подписные строки двух титулов, графы штампа листов до первого ВОР
     /// включительно и роли первого листа ВОР. Листы после ВОР не читаются.
+    /// «ИвановаМ» и «.В.» через пробел или таб — одна фамилия без хвостовой заглавной.
     /// </summary>
     public static List<string> CollectSurnames(IReadOnlyList<RdPage> pages)
     {
@@ -413,7 +415,11 @@ public static partial class RdParser
                 found.AddRange(SurnamesFromRoleLines(page.Text, lexicon));
                 found.AddRange(SurnamesFromSignatureLines(page.Text, lexicon));
                 found.AddRange(SurnamesFromAnyLine(page.Text, lexicon));
+                found.AddRange(GluedSurnames(page.Text));
             }
+
+            found.AddRange(GluedSurnames(page.Stamp));
+            found.AddRange(GluedSurnames(page.Raw));
 
             var vor = IsVorPage(page.Text);
             if (vor)
@@ -536,42 +542,29 @@ public static partial class RdParser
     }
 
     /// <summary>
-    /// Слово из наименования. Фамилии на -ая/-ина/-их не отбрасываются.
-    /// «Корецкий» из «Корецкого» отбрасывается: это не такая фамилия.
+    /// Точное слово наименования. Фамилии на -ая/-ина/-их не отбрасываются.
+    /// Родительный падеж в титуле не отменяет подпись «Фамилия И.О.».
     /// </summary>
     private static bool IsListedName(string value, ISet<string> lexicon)
     {
         var key = TextMatch.Normalize(value);
         if (IsProtectedSurname(value))
             return false;
-        if (lexicon.Contains(key))
-            return true;
-        if (!key.EndsWith("ий", StringComparison.Ordinal) && !key.EndsWith("ый", StringComparison.Ordinal))
-            return false;
-        var stem = key[..^2];
-        if (stem.Length < 4)
-            return false;
-        foreach (var word in lexicon)
-        {
-            if (AdjectiveStem(word) == stem)
-                return true;
-        }
-
-        return false;
+        return lexicon.Contains(key);
     }
 
-    private static string AdjectiveStem(string key)
+    /// <summary>
+    /// Штамп: «ИвановаМ» сразу перед «.В.» (таб, пробел или точка между инициалами).
+    /// Фамилия — слово без хвостовой заглавной. Строка роли не обязательна.
+    /// </summary>
+    private static List<string> GluedSurnames(string text)
     {
-        string[] endings = ["ого", "его", "ому", "ему", "ыми", "ими", "ий", "ый", "ая", "яя", "ое", "ее", "их", "ых"];
-        foreach (var ending in endings)
-        {
-            if (key.Length - ending.Length < 4)
-                continue;
-            if (key.EndsWith(ending, StringComparison.Ordinal))
-                return key[..^ending.Length];
-        }
-
-        return key;
+        var found = new List<string>();
+        if (string.IsNullOrWhiteSpace(text))
+            return found;
+        foreach (Match match in GluedSurnameInitials().Matches(text))
+            found.Add(match.Groups[1].Value);
+        return found;
     }
 
     private static List<string> SurnamesFromSignatureLines(string text, ISet<string> lexicon)
@@ -717,4 +710,8 @@ public static partial class RdParser
 
     [GeneratedRegex(@"(?:ФИО\s*)?([А-ЯЁ][а-яё]{2,})\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.")]
     private static partial Regex SurnameThenInitials();
+
+    // Фамилия на строчные, сразу одна заглавная инициала, затем «.X.» с пробелами или табами.
+    [GeneratedRegex(@"(?<![\p{L}\-])([А-ЯЁ][а-яё]{2,})[А-ЯЁ]\s*\.?\s*\.\s*[А-ЯЁ]\s*\.")]
+    private static partial Regex GluedSurnameInitials();
 }
