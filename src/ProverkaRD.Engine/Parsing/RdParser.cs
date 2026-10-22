@@ -398,7 +398,8 @@ public static partial class RdParser
     /// <summary>
     /// Фамилии тома: подписные строки двух титулов, графы штампа листов до первого ВОР
     /// включительно и роли первого листа ВОР. Листы после ВОР не читаются.
-    /// «ИвановаМ» и «.В.» через пробел или таб — одна фамилия без хвостовой заглавной.
+    /// «ИвановаМ» и «.В.» — фамилия без хвостовой заглавной.
+    /// «Иванова К .А.» (буква инициала отдельным словом) — тоже фамилия.
     /// </summary>
     public static List<string> CollectSurnames(IReadOnlyList<RdPage> pages)
     {
@@ -623,6 +624,8 @@ public static partial class RdParser
             Take(match);
         foreach (Match match in SurnameThenInitials().Matches(line))
             Take(match);
+        foreach (Match match in SurnameThenSplitInitials().Matches(line))
+            Take(match);
         return found;
 
         void Take(Match match)
@@ -714,4 +717,8 @@ public static partial class RdParser
     // Фамилия на строчные, сразу одна заглавная инициала, затем «.X.» с пробелами или табами.
     [GeneratedRegex(@"(?<![\p{L}\-])([А-ЯЁ][а-яё]{2,})[А-ЯЁ]\s*\.?\s*\.\s*[А-ЯЁ]\s*\.")]
     private static partial Regex GluedSurnameInitials();
+
+    // PdfPig режет штамп на «Фамилия», отдельную букву и «.X.».
+    [GeneratedRegex(@"(?<![\p{L}\-])([А-ЯЁ][а-яё]{2,})\s+[А-ЯЁ]\s+\.\s*[А-ЯЁ]\s*\.")]
+    private static partial Regex SurnameThenSplitInitials();
 }
