@@ -361,6 +361,31 @@ public class EngineRulesTests
     }
 
     [Fact]
+    public void Feminine_and_adjective_surnames_stay_name_words_do_not()
+    {
+        var surnames = RdParser.CollectSurnames(
+        [
+            new RdParser.RdPage(1, "Турникетно-кассовый павильон\nКотельная установка\nПлощадка Корецкого\nУзел Ларецкого\nпримечание Милина без инициалов\nРазраб. Милина А.А.\nДальская И.И.", "Н.контр. Тихих Т.Т."),
+            new RdParser.RdPage(2, "ГИП Котельная А.Б.", "Согласовано Ларецкий А.А.\nУтв. Корецкий К.К."),
+            new RdParser.RdPage(3, "Чертёж", "Утв. Новина Н.Н."),
+            new RdParser.RdPage(4, "Ведомость объемов работ\nИсп. Янков Я.Я.", ""),
+            new RdParser.RdPage(5, "Согласовано Белов А.А.", "Светина А.А."),
+        ]);
+        Assert.Contains(surnames, s => s.Contains("Милина", StringComparison.Ordinal));
+        Assert.Contains(surnames, s => s.Contains("Дальская", StringComparison.Ordinal));
+        Assert.Contains(surnames, s => s.Contains("Тихих", StringComparison.Ordinal));
+        Assert.Contains(surnames, s => s.Contains("Новина", StringComparison.Ordinal));
+        Assert.Contains(surnames, s => s.Contains("Янков", StringComparison.Ordinal));
+        Assert.DoesNotContain(surnames, s => s.Contains("Турникетно", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("кассовый", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Котельная", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Корецк", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, s => s.Contains("Ларецкий", StringComparison.Ordinal));
+        Assert.DoesNotContain(surnames, s => s.Contains("Белов", StringComparison.Ordinal));
+        Assert.DoesNotContain(surnames, s => s.Contains("Светина", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Name_words_and_hyphen_parts_are_not_surnames()
     {
         var surnames = RdParser.CollectSurnames(
@@ -477,7 +502,27 @@ public class EngineRulesTests
     public void Blame_names_the_source_that_breaks_a_pair(string act, string rd, string verd, string expected)
     {
         Assert.Equal(expected, SourceBlame.Of(act, rd, verd));
-        Assert.Equal(SourceBlame.InAct, SourceBlame.Of("Опоры.", "Опоры", "Опоры"));
+    }
+
+    [Fact]
+    public void Blame_ignores_punctuation_and_marks_every_source_with_a_typo()
+    {
+        Assert.Equal("", SourceBlame.Of("Опоры.", "Опоры", "Опоры"));
+        Assert.Equal(SourceBlame.InAct, SourceBlame.Of("Другие сооружения", "Опоры.", "Опоры"));
+        Assert.Equal(SourceBlame.InRd, SourceBlame.Of("Опоры", "Мост иной", "Опоры "));
+        Assert.Equal("", SourceBlame.Of("Альфа", "Бета", "Гамма"));
+
+        const string typo = "насыпью соружения";
+        const string correct = "насыпью сооружения";
+        Assert.Equal(Severity.Formatting, TextMatch.Compare(typo, correct));
+        Assert.Equal(
+            SourceBlame.InAct + "; " + SourceBlame.InVerd,
+            SourceBlame.Of(typo, correct, typo));
+        Assert.Equal(SourceBlame.InAct, SourceBlame.Of(typo, correct, correct));
+        Assert.Equal(
+            SourceBlame.InAct + "; " + SourceBlame.InRd,
+            SourceBlame.Of(typo, typo, correct));
+        Assert.DoesNotContain(SourceBlame.InRd, SourceBlame.Of(typo, correct, typo));
     }
 
     [Fact]
@@ -605,6 +650,47 @@ public class EngineRulesTests
             File.Delete(Path.Combine(dir.FullName, actualName));
             var missing = new CheckingEngine().Run(new CheckInput { RdPaths = [path] });
             Assert.Contains(missing.Findings, f => f.CheckName == "Электронная подпись" && f.Severity == Severity.Critical);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Letter_without_a_cipher_is_a_warning_not_a_set()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-stray");
+        var letter = Path.Combine(dir.FullName, "Письмо от 01.01.2026.docx");
+        var kit = Path.Combine(dir.FullName, "100-20-3000-А-КМ1.docx");
+        try
+        {
+            using (var doc = WordprocessingDocument.Create(letter, WordprocessingDocumentType.Document))
+            {
+                var main = doc.AddMainDocumentPart();
+                main.Document = new Document(new Body(
+                    new Paragraph(new Run(new Text("Сопроводительное письмо без шифра комплекта")))));
+                main.Document.Save();
+            }
+
+            WriteRd(kit, "100-20-3000-А-КМ1", "Опоры", "4.10", "Сооружения");
+            var act = Path.Combine(dir.FullName, "РД 4.11.docx");
+            WriteAct(act, "4.11", "4.11.1.1.1", "100-20-3000-А-КМ9", 1000m);
+            var parsed = RdParser.Parse(letter);
+            Assert.True(RdFileRules.IsStray(parsed));
+            Assert.False(RdFileRules.IsStray(RdParser.Parse(kit)));
+
+            var report = new CheckingEngine().Run(new CheckInput
+            {
+                ActPaths = [act],
+                RdPaths = [letter, kit],
+            });
+            var stray = Assert.Single(report.Findings, f => f.CheckName == "Посторонний файл");
+            Assert.Equal(Severity.Warning, stray.Severity);
+            Assert.Equal("Письмо от 01.01.2026.docx", stray.InRd);
+            Assert.DoesNotContain(report.Findings, f => f.CheckName == "Комплект вне актов" && f.ValueA.Contains("Письмо"));
+            Assert.DoesNotContain(report.Findings, f => f.CheckName == "Электронная подпись" && f.InRd.Contains("Письмо"));
+            Assert.Contains(report.Findings, f => f.CheckName == "Электронная подпись" && f.Kit.Contains("КМ1"));
         }
         finally
         {

@@ -169,6 +169,47 @@ public static partial class TextMatch
         return Severity.Formatting;
     }
 
+    /// <summary>
+    /// Какая сторона пары — опечатка с пропущенными 1–2 буквами.
+    /// Подстановка той же длины здесь не угадывается: обе стороны false.
+    /// </summary>
+    public static SpellingGap Spelling(string? left, string? right)
+    {
+        if (Compare(left, right) != Severity.Formatting)
+            return new SpellingGap(false, false);
+        if (VisualKey(left) == VisualKey(right))
+            return new SpellingGap(false, false);
+
+        var (wordsA, digitsA) = Tokens(left);
+        var (wordsB, digitsB) = Tokens(right);
+        if (!digitsA.SequenceEqual(digitsB) || wordsA.Count != wordsB.Count)
+            return new SpellingGap(false, false);
+
+        var leftBad = false;
+        var rightBad = false;
+        for (var i = 0; i < wordsA.Count; i++)
+        {
+            if (wordsA[i] == wordsB[i])
+                continue;
+            if (IsDeletionTypo(wordsA[i], wordsB[i]))
+                leftBad = true;
+            else if (IsDeletionTypo(wordsB[i], wordsA[i]))
+                rightBad = true;
+        }
+
+        return new SpellingGap(leftBad, rightBad);
+    }
+
+    private static bool IsDeletionTypo(string candidate, string other)
+    {
+        if (candidate.Length < 4 || other.Length < 4)
+            return false;
+        var missing = other.Length - candidate.Length;
+        if (missing is < 1 or > 2)
+            return false;
+        return EditDistance(candidate, other, 2) == missing;
+    }
+
     private static (List<string> Words, List<string> Digits) Tokens(string? value)
     {
         var words = new List<string>();
@@ -311,3 +352,5 @@ public static partial class TextMatch
     [GeneratedRegex(@"^-?\d+(?:\.\d+)?$")]
     private static partial Regex MoneyShape();
 }
+
+public readonly record struct SpellingGap(bool LeftMisspelled, bool RightMisspelled);

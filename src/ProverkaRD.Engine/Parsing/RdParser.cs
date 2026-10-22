@@ -22,7 +22,7 @@ public static partial class RdParser
         "формат", "масса", "масштаб", "объект", "адрес", "отопление", "вентиляция", "водоснабжение",
         "канализация", "электрика", "электроснабжение", "автоматизация", "архитектура", "конструктив",
         "пояснительная", "записка", "гип", "нормоконтроль", "отдел", "группа", "утвердил", "утвердил",
-        "исполнил", "руководитель", "заказчика", "подрядчика",
+        "исполнил", "руководитель", "заказчика", "подрядчика", "котельная",
     };
 
     private static readonly string[] RoleMarkers =
@@ -412,6 +412,7 @@ public static partial class RdParser
             {
                 found.AddRange(SurnamesFromRoleLines(page.Text, lexicon));
                 found.AddRange(SurnamesFromSignatureLines(page.Text, lexicon));
+                found.AddRange(SurnamesFromAnyLine(page.Text, lexicon));
             }
 
             var vor = IsVorPage(page.Text);
@@ -419,11 +420,13 @@ public static partial class RdParser
             {
                 found.AddRange(SurnamesFromRoleLines(page.Text, lexicon));
                 found.AddRange(SurnamesFromRoleLines(page.Stamp, lexicon));
+                found.AddRange(ProtectedStampSurnames(page.Stamp, lexicon));
                 passedVor = true;
             }
             else
             {
                 found.AddRange(SurnamesFromRoleLines(page.Stamp, lexicon));
+                found.AddRange(ProtectedStampSurnames(page.Stamp, lexicon));
             }
         }
 
@@ -486,6 +489,89 @@ public static partial class RdParser
         }
 
         return found;
+    }
+
+    private static List<string> SurnamesFromAnyLine(string text, ISet<string> lexicon)
+    {
+        var found = new List<string>();
+        foreach (var line in text.Replace('\r', '\n').Split('\n'))
+            found.AddRange(SurnamesOnLine(line, lexicon));
+        return found;
+    }
+
+    /// <summary>
+    /// В штампе без графы роли оставляем только фамилии на -ая/-ина/-их:
+    /// их съедал фильтр наименований, а обычное слово вроде «Котельная» по-прежнему отсекается.
+    /// </summary>
+    private static List<string> ProtectedStampSurnames(string stamp, ISet<string> lexicon)
+    {
+        var found = new List<string>();
+        if (string.IsNullOrWhiteSpace(stamp))
+            return found;
+        foreach (var line in stamp.Replace('\r', '\n').Split('\n'))
+        {
+            if (IsRoleLine(line))
+                continue;
+            foreach (var name in SurnamesOnLine(line, lexicon))
+            {
+                if (IsProtectedSurname(name))
+                    found.Add(name);
+            }
+        }
+
+        return found;
+    }
+
+    private static bool IsProtectedSurname(string surname)
+    {
+        var key = TextMatch.Normalize(surname);
+        if (key.Length < 5)
+            return false;
+        return key.EndsWith("ая", StringComparison.Ordinal)
+               || key.EndsWith("яя", StringComparison.Ordinal)
+               || key.EndsWith("ина", StringComparison.Ordinal)
+               || key.EndsWith("ына", StringComparison.Ordinal)
+               || key.EndsWith("их", StringComparison.Ordinal)
+               || key.EndsWith("ых", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Слово из наименования. Фамилии на -ая/-ина/-их не отбрасываются.
+    /// «Корецкий» из «Корецкого» отбрасывается: это не такая фамилия.
+    /// </summary>
+    private static bool IsListedName(string value, ISet<string> lexicon)
+    {
+        var key = TextMatch.Normalize(value);
+        if (IsProtectedSurname(value))
+            return false;
+        if (lexicon.Contains(key))
+            return true;
+        if (!key.EndsWith("ий", StringComparison.Ordinal) && !key.EndsWith("ый", StringComparison.Ordinal))
+            return false;
+        var stem = key[..^2];
+        if (stem.Length < 4)
+            return false;
+        foreach (var word in lexicon)
+        {
+            if (AdjectiveStem(word) == stem)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string AdjectiveStem(string key)
+    {
+        string[] endings = ["ого", "его", "ому", "ему", "ыми", "ими", "ий", "ый", "ая", "яя", "ое", "ее", "их", "ых"];
+        foreach (var ending in endings)
+        {
+            if (key.Length - ending.Length < 4)
+                continue;
+            if (key.EndsWith(ending, StringComparison.Ordinal))
+                return key[..^ending.Length];
+        }
+
+        return key;
     }
 
     private static List<string> SurnamesFromSignatureLines(string text, ISet<string> lexicon)
@@ -556,7 +642,7 @@ public static partial class RdParser
                 return;
             if (end < line.Length && IsNameFragment(line[end]))
                 return;
-            if (lexicon is not null && lexicon.Contains(TextMatch.Normalize(value)))
+            if (lexicon is not null && IsListedName(value, lexicon))
                 return;
             found.Add(value);
         }

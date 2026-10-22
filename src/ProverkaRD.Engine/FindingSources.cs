@@ -18,6 +18,7 @@ public static class FindingSources
             case "Электронная подпись":
             case "Подписант не найден в документе":
             case "Номер элемента на титуле РД":
+            case "Посторонний файл":
                 return ("", valueA.Length > 0 ? valueA : valueB, "", "");
             case "Арифметика акта":
             case "Итог таблицы стоимости":
