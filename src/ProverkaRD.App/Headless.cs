@@ -103,6 +103,7 @@ static class Headless
             throw new FileNotFoundException("Не найден файл или папка.", path);
         return Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
             .Where(file => extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase)
-                           && !Path.GetFileName(file).StartsWith("~$", StringComparison.Ordinal));
+                           && !Path.GetFileName(file).StartsWith("~$", StringComparison.Ordinal)
+                           && !RdFileRules.IsAuxiliary(file));
     }
 }

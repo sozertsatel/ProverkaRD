@@ -19,41 +19,30 @@ public static class ReportWriter
     private static void WriteSummary(XLWorkbook workbook, CheckReport report, string? appVersion)
     {
         var sheet = workbook.AddWorksheet("Сводка");
+        var headers = new[]
+        {
+            "Элемент", "Итог", "Критично", "Оформление", "Предупреждения", "Комплектность", "Акт",
+        };
         sheet.Cell(1, 1).Value = Titled("Проверка рабочей документации", appVersion);
-        sheet.Range(1, 1, 1, 8).Merge();
+        sheet.Range(1, 1, 1, headers.Length).Merge();
         sheet.Cell(1, 1).Style.Font.Bold = true;
         sheet.Cell(1, 1).Style.Font.FontSize = 16;
 
-        var critical = report.Findings.Count(f => f.Severity == Severity.Critical);
-        var formatting = report.Findings.Count(f => f.Severity == Severity.Formatting);
-        var warnings = report.Findings.Count(f => f.Severity == Severity.Warning);
+        var critical = report.Acts.Sum(a => a.CriticalCount);
+        var formatting = report.Acts.Sum(a => a.FormattingCount);
+        var warnings = report.Acts.Sum(a => a.WarningCount);
         sheet.Cell(2, 1).Value =
             "ВЭРД: " + (report.VerdFileName ?? "не загружена")
             + "    ВЭСР: " + (report.VesrFileName ?? "не загружена")
             + "    Актов: " + report.Acts.Count
             + "    Критично: " + critical
-            + "    Ошибок оформления: " + formatting
-            + "    Предупреждений: " + warnings;
-        sheet.Range(2, 1, 2, 8).Merge();
-        sheet.Cell(3, 1).Value =
-            "Красный — критичное расхождение. Жёлтый — ошибка оформления: тексты совпадают после нормализации (пробелы, переносы, регистр, точка в конце, «ПК5859» и «ПК 5859», кавычки). "
-            + "Оранжевый — предупреждение. Зелёный — совпадает. Деньги сравниваются с допуском 0,01 руб. НДС 22%: столбец «Пересчёт» = сумма без НДС по ВЭСР × 1,22. "
-            + "Лист «Замечания» содержит только расхождения и предупреждения.";
-        sheet.Range(3, 1, 3, 8).Merge();
-        sheet.Row(3).Height = 36;
+            + "    Оформление: " + formatting
+            + "    Предупреждения: " + warnings;
+        sheet.Range(2, 1, 2, headers.Length).Merge();
+        sheet.Cell(3, 1).Value = "Красный — критично. Жёлтый — ошибка оформления. Оранжевый — предупреждение. Зелёный — совпадает. Итог акта — худший статус его замечаний и комплектов.";
+        sheet.Range(3, 1, 3, headers.Length).Merge();
         sheet.Cell(3, 1).Style.Alignment.WrapText = true;
 
-        var headers = new[]
-        {
-            "Акт", "Элемент",
-            "Наименование в акте", "Наименование в ВЭРД", "Статус наименования",
-            "Наименование стоимости в акте", "Наименование в ВЭСР", "Статус наименования стоимости",
-            "Код ДГП в акте", "Код ДГП в ВЭРД", "Код есть в ВЭСР", "Статус кода",
-            "Без НДС, акт", "Без НДС, ВЭСР", "Статус без НДС",
-            "С НДС, акт", "Пересчёт ВЭСР × 1,22", "Статус с НДС",
-            "Комплектов в акте", "Комплектов в ВЭРД", "Комплектность", "Статус комплектности",
-            "Итог",
-        };
         const int headerRow = 5;
         for (var i = 0; i < headers.Length; i++)
             sheet.Cell(headerRow, i + 1).Value = headers[i];
@@ -62,41 +51,24 @@ public static class ReportWriter
         var row = headerRow + 1;
         foreach (var act in report.Acts)
         {
-            var col = 1;
-            sheet.Cell(row, col++).Value = act.FileName;
-            sheet.Cell(row, col++).Value = act.ElementNo;
-            sheet.Cell(row, col++).Value = act.ActElementName;
-            sheet.Cell(row, col++).Value = act.VerdElementName;
-            Status(sheet.Cell(row, col++), act.NameStatus);
-            sheet.Cell(row, col++).Value = act.ActCostName;
-            sheet.Cell(row, col++).Value = act.VesrCostName;
-            Status(sheet.Cell(row, col++), act.CostNameStatus);
-            sheet.Cell(row, col++).Value = act.ActCode;
-            sheet.Cell(row, col++).Value = act.VerdCode;
-            sheet.Cell(row, col++).Value = act.CodeFoundInVesr ? "да" : "нет";
-            Status(sheet.Cell(row, col++), act.CodeStatus);
-            Money(sheet.Cell(row, col++), act.ActNet);
-            Money(sheet.Cell(row, col++), act.VesrNet);
-            Status(sheet.Cell(row, col++), act.NetStatus);
-            Money(sheet.Cell(row, col++), act.ActGross);
-            Money(sheet.Cell(row, col++), act.GrossRecalculated);
-            Status(sheet.Cell(row, col++), act.GrossStatus);
-            sheet.Cell(row, col++).Value = act.ActKitCount;
-            sheet.Cell(row, col++).Value = act.VerdKitCount;
-            sheet.Cell(row, col++).Value = act.CompletenessText;
-            Status(sheet.Cell(row, col++), act.CompletenessStatus);
-            Status(sheet.Cell(row, col), act.Overall);
+            sheet.Cell(row, 1).Value = act.ElementNo;
+            Status(sheet.Cell(row, 2), act.Overall);
+            sheet.Cell(row, 3).Value = act.CriticalCount;
+            sheet.Cell(row, 4).Value = act.FormattingCount;
+            sheet.Cell(row, 5).Value = act.WarningCount;
+            sheet.Cell(row, 6).Value = act.CompletenessText;
+            Status(sheet.Cell(row, 6), act.CompletenessStatus);
+            sheet.Cell(row, 6).Value = act.CompletenessText;
+            sheet.Cell(row, 7).Value = act.FileName;
             sheet.Row(row).Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
             row++;
         }
 
         var totalRow = row;
         sheet.Cell(totalRow, 1).Value = "Итого";
-        sheet.Cell(totalRow, 1).Style.Font.Bold = true;
-        Money(sheet.Cell(totalRow, 13), Sum(report.Acts.Select(a => a.ActNet)));
-        Money(sheet.Cell(totalRow, 14), Sum(report.Acts.Select(a => a.VesrNet)));
-        Money(sheet.Cell(totalRow, 16), Sum(report.Acts.Select(a => a.ActGross)));
-        Money(sheet.Cell(totalRow, 17), Sum(report.Acts.Select(a => a.GrossRecalculated)));
+        sheet.Cell(totalRow, 3).Value = critical;
+        sheet.Cell(totalRow, 4).Value = formatting;
+        sheet.Cell(totalRow, 5).Value = warnings;
         sheet.Range(totalRow, 1, totalRow, headers.Length).Style.Font.Bold = true;
         sheet.Range(totalRow, 1, totalRow, headers.Length).Style.Fill.BackgroundColor = XLColor.FromHtml("#D6DCE4");
 
@@ -104,11 +76,8 @@ public static class ReportWriter
         if (report.Acts.Count > 0)
             sheet.Range(headerRow, 1, totalRow - 1, headers.Length).SetAutoFilter();
         Widths(sheet, headers.Length);
-        sheet.Column(3).Width = 46;
-        sheet.Column(4).Width = 46;
-        sheet.Column(6).Width = 46;
-        sheet.Column(7).Width = 46;
-        sheet.Column(21).Width = 42;
+        sheet.Column(6).Width = 56;
+        sheet.Column(7).Width = 36;
         sheet.Rows(headerRow + 1, Math.Max(headerRow + 1, totalRow)).Style.Alignment.WrapText = true;
     }
 
@@ -119,7 +88,7 @@ public static class ReportWriter
         sheet.Cell(1, 1).Style.Font.Bold = true;
         sheet.Cell(1, 1).Style.Font.FontSize = 16;
         sheet.Range(1, 1, 1, 6).Merge();
-        sheet.Cell(2, 1).Value = "Строка — один шифр. Фамилии собраны с титульных листов, из основной надписи чертежей и с первого листа ведомости объёмов работ. Подписанты — фамилии из сертификатов файла .sig, без удостоверяющих центров.";
+        sheet.Cell(2, 1).Value = "Строка — один шифр. Фамилии читаются из штампа и строк ролей. Подписанты — фамилии из файла .sig, без удостоверяющих центров.";
         sheet.Range(2, 1, 2, 8).Merge();
         sheet.Cell(2, 1).Style.Alignment.WrapText = true;
         sheet.Row(2).Height = 32;
@@ -185,13 +154,18 @@ public static class ReportWriter
     private static void WriteFindings(XLWorkbook workbook, CheckReport report, string? appVersion)
     {
         var sheet = workbook.AddWorksheet("Замечания");
+        var headers = new[]
+        {
+            "№", "Элемент", "Критичность", "Что проверялось",
+            "В акте", "В РД", "В ВЭРД", "В ВЭСР", "Где",
+        };
         sheet.Cell(1, 1).Value = Titled("Замечания", appVersion);
         sheet.Cell(1, 1).Style.Font.Bold = true;
         sheet.Cell(1, 1).Style.Font.FontSize = 16;
-        sheet.Cell(2, 1).Value = "Каждая строка — одно расхождение или предупреждение. Совпавшие проверки на этот лист не выводятся: они зелёные на листах «Сводка» и «Комплекты».";
-        sheet.Range(2, 1, 2, 6).Merge();
+        sheet.Range(1, 1, 1, headers.Length).Merge();
+        sheet.Cell(2, 1).Value = "Одинаковые замечания собраны в одну строку. Совпавшие проверки на этот лист не выводятся.";
+        sheet.Range(2, 1, 2, headers.Length).Merge();
 
-        var headers = new[] { "№", "Акт", "Комплект", "Что проверялось", "Значение A", "Значение B", "Критичность", "Пояснение" };
         const int headerRow = 4;
         for (var i = 0; i < headers.Length; i++)
             sheet.Cell(headerRow, i + 1).Value = headers[i];
@@ -202,13 +176,16 @@ public static class ReportWriter
         foreach (var finding in report.Findings)
         {
             sheet.Cell(row, 1).Value = number++;
-            sheet.Cell(row, 2).Value = finding.Act;
-            sheet.Cell(row, 3).Value = finding.Kit;
+            sheet.Cell(row, 2).Value = finding.ElementNo;
+            Status(sheet.Cell(row, 3), finding.Severity);
             sheet.Cell(row, 4).Value = finding.CheckName;
-            sheet.Cell(row, 5).Value = finding.ValueA;
-            sheet.Cell(row, 6).Value = finding.ValueB;
-            Status(sheet.Cell(row, 7), finding.Severity);
-            sheet.Cell(row, 8).Value = finding.Explanation;
+            WriteValue(sheet.Cell(row, 5), finding.InAct);
+            WriteValue(sheet.Cell(row, 6), finding.InRd);
+            WriteValue(sheet.Cell(row, 7), finding.InVerd);
+            WriteValue(sheet.Cell(row, 8), finding.InVesr);
+            sheet.Cell(row, 9).Value = finding.Places.Length > 0
+                ? finding.Places
+                : string.Join(" / ", new[] { finding.Act, finding.Kit }.Where(s => !string.IsNullOrWhiteSpace(s) && s != "—"));
             row++;
         }
 
@@ -216,13 +193,15 @@ public static class ReportWriter
         if (report.Findings.Count > 0)
             sheet.Range(headerRow, 1, row - 1, headers.Length).SetAutoFilter();
         Widths(sheet, headers.Length);
+        sheet.Column(1).Width = 6;
         sheet.Column(4).Width = 42;
-        sheet.Column(5).Width = 55;
-        sheet.Column(6).Width = 55;
-        sheet.Column(8).Width = 78;
+        sheet.Column(5).Width = 36;
+        sheet.Column(6).Width = 36;
+        sheet.Column(7).Width = 36;
+        sheet.Column(8).Width = 36;
+        sheet.Column(9).Width = 48;
         if (row > headerRow + 1)
             sheet.Rows(headerRow + 1, row - 1).Style.Alignment.WrapText = true;
-        sheet.Column(1).Width = 6;
     }
 
     private static string Titled(string title, string? version) =>
@@ -251,24 +230,36 @@ public static class ReportWriter
         cell.Style.Font.Bold = severity != Severity.Ok;
     }
 
+    private static void WriteValue(IXLCell cell, string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+        var money = TextMatch.ParseMoney(text);
+        if (money is not null && LooksLikeMoney(text))
+        {
+            cell.Value = money.Value;
+            cell.Style.NumberFormat.Format = "#,##0.00";
+            return;
+        }
+        cell.Value = text;
+    }
+
+    private static bool LooksLikeMoney(string text)
+    {
+        var digits = text.Count(char.IsDigit);
+        if (digits < 3)
+            return false;
+        if (text.Any(ch => char.IsLetter(ch)))
+            return false;
+        return text.Contains(',') || text.Contains(' ') || digits >= 4;
+    }
+
     private static void Money(IXLCell cell, decimal? value)
     {
         if (value is null)
             return;
         cell.Value = value.Value;
         cell.Style.NumberFormat.Format = "#,##0.00";
-    }
-
-    private static decimal? Sum(IEnumerable<decimal?> values)
-    {
-        decimal? sum = null;
-        foreach (var value in values)
-        {
-            if (value is null)
-                continue;
-            sum = (sum ?? 0m) + value.Value;
-        }
-        return sum;
     }
 
     private static void Widths(IXLWorksheet sheet, int columns)

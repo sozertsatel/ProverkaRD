@@ -18,9 +18,11 @@ public partial class MainWindow : Window
     private readonly WorkspaceModel _model = new();
     private readonly ListBox _rdList;
     private readonly ListBox _actList;
+    private AppSettings _settings = AppSettings.Load();
 
     public MainWindow()
     {
+        _model.Options = _settings.ToOptions();
         DataContext = _model;
         AvaloniaXamlLoader.Load(this);
         Title = AppInfo.WindowTitle;
@@ -29,7 +31,11 @@ public partial class MainWindow : Window
             versionText.Text = AppInfo.Version;
         _rdList = this.FindControl<ListBox>("RdList") ?? throw new InvalidOperationException("Не найден список комплектов.");
         _actList = this.FindControl<ListBox>("ActList") ?? throw new InvalidOperationException("Не найден список актов.");
-        Opened += (_, _) => _ = RunUpdateCheck(interactive: false);
+        Opened += (_, _) =>
+        {
+            if (_settings.CheckUpdatesOnStart)
+                _ = RunUpdateCheck(interactive: false);
+        };
     }
 
     private async void OnLoadVerd(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -177,8 +183,12 @@ public partial class MainWindow : Window
         return folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
     }
 
-    private async void OnCheckUpdates(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
-        await RunUpdateCheck(interactive: true);
+    private async void OnSettings(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        await new SettingsWindow(_settings).ShowDialog(this);
+        _settings = AppSettings.Load();
+        _model.Options = _settings.ToOptions();
+    }
 
     private async Task RunUpdateCheck(bool interactive)
     {
@@ -365,12 +375,15 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
             ActFiles.Remove(item);
     }
 
+    public CheckOptions Options { get; set; } = new();
+
     public CheckInput BuildInput() => new()
     {
         VerdPath = VerdPath,
         VesrPath = VesrPath,
         ActPaths = ActFiles.Select(f => f.Path).ToList(),
         RdPaths = RdFiles.Select(f => f.Path).ToList(),
+        Options = Options,
     };
 
     public void Apply(CheckReport report)
@@ -400,7 +413,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
             FilteredActs.Add(act);
         foreach (var kit in _report.Kits.Where(k => Hits(needle, k.Cipher, k.ActName, k.ElementNo, k.Surnames, k.Signers, k.ActKitName, k.RdElementName)))
             FilteredKits.Add(kit);
-        foreach (var finding in _report.Findings.Where(f => Hits(needle, f.Act, f.Kit, f.CheckName, f.ValueA, f.ValueB, f.Explanation)))
+        foreach (var finding in _report.Findings.Where(f => Hits(needle, f.Act, f.Kit, f.ElementNo, f.CheckName, f.ValueA, f.ValueB, f.InAct, f.InRd, f.InVerd, f.InVesr, f.Places)))
             FilteredFindings.Add(finding);
     }
 
@@ -432,6 +445,8 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         if (target.Any(f => string.Equals(f.Path, path, StringComparison.OrdinalIgnoreCase)))
             return;
         var caption = name;
+        if (RdFileRules.IsAuxiliary(path))
+            return;
         if (withSignature)
         {
             var sig = SignatureParser.FindSignature(path);
