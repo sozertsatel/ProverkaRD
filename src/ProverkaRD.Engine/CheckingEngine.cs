@@ -9,10 +9,14 @@ public sealed partial class CheckingEngine
     private const decimal VatRate = 0.22m;
     private readonly List<Finding> _findings = [];
     private bool _rdFilesLoaded;
+    private string _currentElement = "";
+    private CheckOptions _options = new();
 
     public CheckReport Run(CheckInput input)
     {
         _findings.Clear();
+        _currentElement = "";
+        _options = input.Options ?? new CheckOptions();
         var report = new CheckReport
         {
             VerdFileName = NameOf(input.VerdPath),
@@ -80,6 +84,8 @@ public sealed partial class CheckingEngine
         {
             if (path.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
                 continue;
+            if (RdFileRules.IsAuxiliary(path))
+                continue;
             var rd = RdParser.Parse(path);
             rdFiles.Add(rd);
             foreach (var error in rd.Errors)
@@ -109,10 +115,20 @@ public sealed partial class CheckingEngine
         foreach (var rd in rdFiles.Where(r => !usedRd.Contains(r)))
             CheckLooseRd(rd, verdByCipher, acts.Count > 0, report);
 
-        report.Findings.AddRange(_findings
-            .OrderByDescending(f => f.Severity)
-            .ThenBy(f => f.Act, StringComparer.CurrentCultureIgnoreCase)
-            .ThenBy(f => f.Kit, StringComparer.CurrentCultureIgnoreCase));
+        var grouped = FindingGrouper.Apply(_findings, _options);
+        foreach (var act in report.Acts)
+        {
+            var score = ActScore.Score(act, grouped, report.Kits);
+            act.Overall = score.Overall;
+            act.CriticalCount = score.Critical;
+            act.FormattingCount = score.Formatting;
+            act.WarningCount = score.Warnings;
+        }
+
+        report.Findings.AddRange(grouped
+            .OrderBy(f => ElementOrder.Key(ElementOrder.First(f.ElementNo)), IntArrayComparer.Instance)
+            .ThenByDescending(f => f.Severity)
+            .ThenBy(f => f.CheckName, StringComparer.CurrentCultureIgnoreCase));
         return report;
     }
 
@@ -125,6 +141,7 @@ public sealed partial class CheckingEngine
         CheckReport report)
     {
         var label = act.DisplayName;
+        _currentElement = act.ElementNoFromFileName ?? act.ElementNoFromHeading ?? "";
         var sources = new List<(string Label, string Value)>();
         if (!string.IsNullOrWhiteSpace(act.ElementNoFromFileName))
             sources.Add(("имя файла", act.ElementNoFromFileName));
@@ -151,6 +168,8 @@ public sealed partial class CheckingEngine
         var resolved = sources.Select(s => s.Value).FirstOrDefault(v => verdByNumber.ContainsKey(TextMatch.CodeKey(v)))
                        ?? sources.FirstOrDefault().Value
                        ?? "";
+        if (resolved.Length > 0)
+            _currentElement = resolved;
 
         VerdElement? element = null;
         if (resolved.Length > 0)
@@ -467,6 +486,7 @@ public sealed partial class CheckingEngine
             }
         }
 
+        _currentElement = hit?.Element.Number ?? rd.ElementNo ?? "";
         if (actsLoaded)
         {
             Add("—", rd.Cipher.Length > 0 ? rd.Cipher : rd.FileName, "Комплект вне актов", rd.FileName, "", Severity.Warning,
@@ -597,33 +617,30 @@ public sealed partial class CheckingEngine
             return Severity.Critical;
         }
 
-        var document = rd.Surnames.ToDictionary(TextMatch.Normalize, s => s, StringComparer.Ordinal);
-        var signers = rd.Signers.ToDictionary(TextMatch.Normalize, s => s, StringComparer.Ordinal);
+        var document = rd.Surnames.Where(s => !SurnameStem.IsIgnored(s, _options.IgnoredSigners)).ToList();
+        var signers = rd.Signers.Where(s => !SurnameStem.IsIgnored(s, _options.IgnoredSigners)).ToList();
         var status = Severity.Ok;
-        if (document.Count == 0)
+        if (document.Count == 0 && rd.Surnames.Count == 0)
         {
             Add(actLabel, cipher, "Фамилии в комплекте", "", string.Join(", ", rd.Signers), Severity.Critical,
-                "В извлекаемом тексте комплекта не найдены фамилии (титул, основная надпись, ведомость объёмов работ). Сверить подписантов не с чем.");
+                "");
             status = Severity.Critical;
         }
 
-        foreach (var (key, surname) in document)
+        foreach (var surname in document)
         {
-            if (signers.ContainsKey(key))
+            if (signers.Any(s => SurnameStem.Same(s, surname)))
                 continue;
             status = Severity.Critical;
-            Add(actLabel, cipher, "Фамилия без подписи", surname, string.Join(", ", rd.Signers), Severity.Critical,
-                "Фамилия «" + surname + "» есть в тексте комплекта, но среди подписантов файла .sig её нет.");
+            Add(actLabel, cipher, "Фамилия без подписи", surname, string.Join(", ", rd.Signers), Severity.Critical, "");
         }
 
-        foreach (var (key, signer) in signers)
+        foreach (var signer in signers)
         {
-            if (document.ContainsKey(key))
+            if (document.Any(s => SurnameStem.Same(s, signer)))
                 continue;
             status = SeverityText.Worst(status, Severity.Warning);
-            Add(actLabel, cipher, "Подписант не найден в документе", signer, string.Join(", ", rd.Surnames), Severity.Warning,
-                "Сертификат «" + signer + "» есть в подписи, но фамилия не встретилась в тексте титула (листы 1–2), основной надписи и ведомости объёмов работ. "
-                + "Текст, переведённый в кривые на чертеже, программа не читает. Сертификаты удостоверяющих центров (Минцифры, Сертум-Про, ТАКСКОМ) в список подписантов не входят.");
+            Add(actLabel, cipher, FindingGrouper.SignerMissing, signer, string.Join(", ", rd.Surnames), Severity.Warning, "");
         }
 
         return status;
@@ -663,15 +680,28 @@ public sealed partial class CheckingEngine
         var severity = TextMatch.Compare(left, right);
         if (severity == Severity.Ok)
             return severity;
-        var tail = severity == Severity.Formatting
-            ? " После нормализации тексты совпадают: пробелы и переносы строк, регистр, точка в конце, пробел в обозначениях вроде «ПК 5859» и «ПК5859», неразрывный пробел и вид кавычек. Это ошибка оформления."
-            : " Расхождение не снимается нормализацией оформления. Это критично.";
-        Add(act, kit, check, OneLine(left), OneLine(right), severity, what + tail);
+        Add(act, kit, check, OneLine(left), OneLine(right), severity, "");
+        _ = what;
         return severity;
     }
 
-    private void Add(string act, string kit, string check, string valueA, string valueB, Severity severity, string explanation) =>
-        _findings.Add(new Finding(act, kit, check, valueA, valueB, severity, explanation));
+    private void Add(string act, string kit, string check, string valueA, string valueB, Severity severity, string explanation)
+    {
+        var (inAct, inRd, inVerd, inVesr) = FindingSources.Place(check, valueA, valueB);
+        _findings.Add(new Finding(
+            act,
+            kit,
+            check,
+            valueA,
+            valueB,
+            severity,
+            explanation,
+            _currentElement,
+            inAct,
+            inRd,
+            inVerd,
+            inVesr));
+    }
 
     private static string ElementTitle(string costName)
     {

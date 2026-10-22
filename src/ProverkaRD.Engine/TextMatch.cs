@@ -82,7 +82,16 @@ public static partial class TextMatch
             return Severity.Ok;
         if (Normalize(left) == Normalize(right))
             return Severity.Formatting;
+        if (WithoutPunctuation(left) == WithoutPunctuation(right))
+            return Severity.Formatting;
         return Severity.Critical;
+    }
+
+    /// <summary>Текст без знаков пунктуации: отличие только ими — ошибка оформления.</summary>
+    public static string WithoutPunctuation(string? value)
+    {
+        var text = PunctuationMarks().Replace(Normalize(value), "");
+        return Whitespace().Replace(text, " ").Trim();
     }
 
     public static string CodeKey(string? code) => Normalize(code);
@@ -115,6 +124,9 @@ public static partial class TextMatch
 
     public static string CollapseLines(string? value) =>
         Whitespace().Replace(StripInvisible(value).Replace('\u00A0', ' '), " ").Trim();
+
+    [GeneratedRegex(@"[.,;:!?…·]+")]
+    private static partial Regex PunctuationMarks();
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex Whitespace();
