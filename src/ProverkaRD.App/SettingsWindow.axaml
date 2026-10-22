@@ -9,7 +9,6 @@
         Background="White">
     <StackPanel Margin="20" Spacing="12">
         <TextBlock Text="Замечания" FontSize="16" FontWeight="SemiBold"/>
-        <CheckBox x:Name="GroupSignersBox" Content="Группировать предупреждения «подписант не найден в тексте» по фамилии"/>
         <CheckBox x:Name="GroupDuplicatesBox" Content="Объединять одинаковые замечания в одну строку"/>
         <TextBlock TextWrapping="Wrap" Foreground="#5C6B7A"
                    Text="Игнорируемые подписанты не попадают в замечания о фамилии. По одному в строке. Сравнение по основе фамилии: «Павлову» и «Павлов» — один человек."/>

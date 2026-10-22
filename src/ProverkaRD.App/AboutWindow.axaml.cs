@@ -34,11 +34,9 @@ public partial class AboutWindow : Window
     private async void OnCheckUpdates(object? sender, RoutedEventArgs e)
     {
         _status.Text = "Проверяем последний релиз…";
-        var result = await UpdateChecker.CheckAsync();
-        _status.Text = result.Kind == UpdateCheckKind.Offline
-            ? "Нет сети, проверить обновление не удалось."
-            : result.Message;
-        _releases.IsVisible = result.Kind is UpdateCheckKind.Newer or UpdateCheckKind.Unavailable;
+        await UpdateFlow.RunAsync(this, interactive: true);
+        _status.Text = "Проверка завершена. Если нашлась новая версия, её можно поставить из открывшегося окна.";
+        _releases.IsVisible = true;
     }
 
     private void OnClose(object? sender, RoutedEventArgs e) => Close();

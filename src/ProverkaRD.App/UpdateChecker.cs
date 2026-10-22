@@ -13,7 +13,15 @@ public enum UpdateCheckKind
     Offline,
 }
 
-public sealed record UpdateCheckResult(UpdateCheckKind Kind, string? RemoteTag, string Message);
+public sealed record UpdateCheckResult(
+    UpdateCheckKind Kind,
+    string? RemoteTag,
+    string Message,
+    string? Notes = null,
+    string? PageUrl = null,
+    string? ExeUrl = null,
+    long ExeSize = 0,
+    string? HashUrl = null);
 
 public static class UpdateChecker
 {
@@ -32,31 +40,39 @@ public static class UpdateChecker
                 return Unavailable();
 
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            string? tag;
+            ReleaseInfo? release;
             try
             {
-                tag = ReadTag(body);
+                release = ReleaseCatalog.Parse(body);
             }
             catch (JsonException)
             {
                 return Unavailable();
             }
 
-            if (string.IsNullOrWhiteSpace(tag) || !ReleaseVersion.TryParse(tag, out _))
+            if (release is null || !ReleaseVersion.TryParse(release.Tag, out _))
                 return Unavailable();
 
-            if (ReleaseVersion.IsNewer(tag, AppInfo.Version))
+            var page = string.IsNullOrWhiteSpace(release.PageUrl) ? AppInfo.ReleasesPage : release.PageUrl;
+            if (ReleaseVersion.IsNewer(release.Tag, AppInfo.Version))
             {
                 return new UpdateCheckResult(
                     UpdateCheckKind.Newer,
-                    tag,
-                    $"Доступна версия {tag}. Сейчас установлена {AppInfo.Version}. Откройте страницу релизов, чтобы скачать новую сборку.");
+                    release.Tag,
+                    $"Доступна версия {release.Tag}. Сейчас установлена {AppInfo.Version}.",
+                    release.Body,
+                    page,
+                    release.Exe?.Url,
+                    release.Exe?.Size ?? 0,
+                    release.Sha256?.Url);
             }
 
             return new UpdateCheckResult(
                 UpdateCheckKind.UpToDate,
-                tag,
-                $"Установлена актуальная версия {AppInfo.Version}.");
+                release.Tag,
+                $"Установлена актуальная версия {AppInfo.Version}.",
+                release.Body,
+                page);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
         {
@@ -68,12 +84,6 @@ public static class UpdateChecker
         UpdateCheckKind.Unavailable,
         null,
         "Не удалось проверить обновления. Закрытый репозиторий без входа отвечает «не найдено». Страницу релизов можно открыть вручную.");
-
-    private static string? ReadTag(string json)
-    {
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.TryGetProperty("tag_name", out var tag) ? tag.GetString() : null;
-    }
 
     private static HttpClient CreateClient()
     {

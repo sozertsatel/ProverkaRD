@@ -10,12 +10,14 @@ public sealed partial class CheckingEngine
     private readonly List<Finding> _findings = [];
     private bool _rdFilesLoaded;
     private string _currentElement = "";
+    private string _currentActPath = "";
     private CheckOptions _options = new();
 
     public CheckReport Run(CheckInput input)
     {
         _findings.Clear();
         _currentElement = "";
+        _currentActPath = "";
         _options = input.Options ?? new CheckOptions();
         var report = new CheckReport
         {
@@ -141,6 +143,7 @@ public sealed partial class CheckingEngine
         CheckReport report)
     {
         var label = act.DisplayName;
+        _currentActPath = act.FilePath;
         _currentElement = act.ElementNoFromFileName ?? act.ElementNoFromHeading ?? "";
         var sources = new List<(string Label, string Value)>();
         if (!string.IsNullOrWhiteSpace(act.ElementNoFromFileName))
@@ -209,8 +212,7 @@ public sealed partial class CheckingEngine
         var verdCode = element?.DgpCode ?? "";
         var codeStatus = Severity.Ok;
         if (element is not null)
-            codeStatus = TextCheck(label, "—", "Код ДГП: акт и ВЭРД", actCode, verdCode,
-                "Сравнивается код из столбца «№ тома» акта и столбец G «№ Элемента по ДГП» ВЭРД для элемента " + element.Number + ".");
+            codeStatus = EmitField(label, "—", "Код ДГП", actCode, "", verdCode, "");
         else if (actCode.Length == 0)
             codeStatus = Severity.Critical;
 
@@ -246,15 +248,13 @@ public sealed partial class CheckingEngine
 
         var nameStatus = element is null
             ? Severity.Critical
-            : TextCheck(label, "—", "Наименование элемента: акт и ВЭРД", actElementName, element.Name,
-                "Наименование элемента берётся из таблицы стоимости акта (после «Рабочая документация.») и сравнивается со столбцом B ВЭРД.");
+            : TextMatch.Compare(actElementName, element.Name);
+        if (element is not null && act.Kits.Count == 0 && nameStatus != Severity.Ok)
+            EmitField(label, "—", "Наименование элемента", actElementName, "", element.Name, "");
 
-        var costNameStatus = Severity.Ok;
-        if (vesrByAct is null)
-            costNameStatus = actCostName.Length == 0 ? Severity.Critical : Severity.Critical;
-        else
-            costNameStatus = TextCheck(label, "—", "Наименование стоимости: акт и ВЭСР", actCostName, vesrByAct.Name,
-                "Полное наименование из таблицы стоимости акта сравнивается со столбцом B ВЭСР по коду ДГП акта.");
+        var costNameStatus = Severity.Critical;
+        if (vesrByAct is not null)
+            costNameStatus = EmitField(label, "—", "Наименование стоимости", actCostName, "", "", vesrByAct.Name);
 
         if (costLine is null && totalLine is null)
         {
@@ -330,8 +330,7 @@ public sealed partial class CheckingEngine
         if (costLine is not null && vesrByAct is not null)
         {
             if (costLine.Unit.Length > 0 || vesrByAct.Unit.Length > 0)
-                TextCheck(label, "—", "Единица измерения", costLine.Unit, vesrByAct.Unit,
-                    "Единица измерения таблицы стоимости акта и столбец C ВЭСР.");
+                EmitField(label, "—", "Единица измерения", costLine.Unit, "", "", vesrByAct.Unit);
             if (costLine.Quantity is decimal qty && vesrByAct.Quantity is decimal vesrQty
                 && !TextMatch.MoneyEquals(qty, vesrQty))
             {
@@ -350,6 +349,8 @@ public sealed partial class CheckingEngine
         report.Acts.Add(new ActResult
         {
             FileName = label,
+            SourcePath = act.FilePath,
+            AdvanceNet = act.AdvanceNet,
             ElementNo = resolved,
             ActElementName = OneLine(actElementName),
             VerdElementName = OneLine(element?.Name),
@@ -425,8 +426,7 @@ public sealed partial class CheckingEngine
             verdByKey.TryGetValue(TextMatch.CodeKey(kit.Cipher), out var verdKit);
             var nameStatus = verdKit is null
                 ? Severity.Critical
-                : TextCheck(label, kit.Cipher, "Наименование комплекта: акт и ВЭРД", kit.Name, verdKit.Name,
-                    "Столбец «Наименование документа» акта и столбец E «Наименование документации» ВЭРД.");
+                : TextMatch.Compare(kit.Name, verdKit.Name);
             if (nameStatus == Severity.Critical)
                 nameProblems++;
             else if (nameStatus == Severity.Formatting)
@@ -441,19 +441,14 @@ public sealed partial class CheckingEngine
                 rd = files[0];
                 usedRd.Add(rd);
             }
-            else if (_rdFilesLoaded)
-            {
-                Add(label, kit.Cipher, "Файл комплекта РД", kit.Cipher, "", Severity.Warning,
-                    "Комплект указан в акте, но файл РД не загружен. Замечание появляется только если хотя бы один комплект уже приложен.");
-            }
 
-            var row = BuildKitRow(label, element, kit.DgpCode.Length > 0 ? kit.DgpCode : element?.DgpCode ?? "", kit, verdKit, rd, actElementName);
+            var row = BuildKitRow(label, act.FilePath, act.AdvanceNet, element, kit.DgpCode.Length > 0 ? kit.DgpCode : element?.DgpCode ?? "", kit, verdKit, rd, actElementName);
             report.Kits.Add(row);
         }
 
         foreach (var verdKit in verdKits.Where(k => !actKeys.Contains(TextMatch.CodeKey(k.Cipher))))
         {
-            report.Kits.Add(BuildKitRow(label, element, element?.DgpCode ?? "", null, verdKit, null, null));
+            report.Kits.Add(BuildKitRow(label, act.FilePath, act.AdvanceNet, element, element?.DgpCode ?? "", null, verdKit, null, null));
         }
 
         var parts = new List<string>
@@ -486,6 +481,7 @@ public sealed partial class CheckingEngine
             }
         }
 
+        _currentActPath = "";
         _currentElement = hit?.Element.Number ?? rd.ElementNo ?? "";
         if (actsLoaded)
         {
@@ -501,11 +497,13 @@ public sealed partial class CheckingEngine
                 "Шифр загруженного комплекта не найден в ВЭРД.");
         }
 
-        report.Kits.Add(BuildKitRow("—", element, element?.DgpCode ?? "", null, kit, rd, null));
+        report.Kits.Add(BuildKitRow("—", "", null, element, element?.DgpCode ?? "", null, kit, rd, null));
     }
 
     private KitResult BuildKitRow(
         string actLabel,
+        string actPath,
+        decimal? advance,
         VerdElement? element,
         string dgp,
         ActKit? actKit,
@@ -514,86 +512,124 @@ public sealed partial class CheckingEngine
         string? actElementName)
     {
         var cipher = actKit?.Cipher ?? verdKit?.Cipher ?? rd?.Cipher ?? "";
-        var nameStatus = Severity.Ok;
-        if (actKit is not null && verdKit is not null)
-            nameStatus = TextMatch.Compare(actKit.Name, verdKit.Name);
-        else if (actKit is not null && verdKit is null)
-            nameStatus = Severity.Critical;
-        else if (actKit is null && verdKit is not null)
-            nameStatus = Severity.Critical;
+        var actCipher = actKit?.Cipher ?? "";
+        var verdCipher = verdKit?.Cipher ?? "";
+        var titleCipher = rd?.CipherFromText ?? "";
+        var fileCipher = rd?.CipherFromFileName ?? "";
+        var shownTitle = titleCipher;
+        if (titleCipher.Length > 0 && fileCipher.Length > 0 && TextMatch.Compare(titleCipher, fileCipher) != Severity.Ok)
+            shownTitle = titleCipher + " / файл: " + fileCipher;
+        else if (titleCipher.Length == 0)
+            shownTitle = fileCipher;
 
-        var rdNameStatus = Severity.Ok;
-        var rdElementStatus = Severity.Ok;
+        var cipherStatus = CompareMany(actCipher, verdCipher, titleCipher, fileCipher);
+        if (cipherStatus != Severity.Ok)
+        {
+            var (left, right) = FirstMismatch(actCipher, verdCipher, titleCipher, fileCipher);
+            _findings.Add(new Finding(
+                actLabel,
+                cipher,
+                "Шифр",
+                TextMatch.ForReport(left),
+                TextMatch.ForReport(right),
+                cipherStatus,
+                "",
+                _currentElement,
+                TextMatch.ForReport(actCipher),
+                TextMatch.ForReport(shownTitle),
+                TextMatch.ForReport(verdCipher),
+                "",
+                _currentActPath));
+        }
+
+        var actName = actKit?.Name ?? "";
+        var verdName = verdKit?.Name ?? "";
+        var rdName = rd?.KitName ?? "";
+        var nameStatus = actKit is null && verdKit is null && rd is null
+            ? Severity.Ok
+            : EmitField(actLabel, cipher, "Наименование комплекта", actName, rdName, verdName, "");
+        if (actKit is not null && verdKit is null)
+            nameStatus = SeverityText.Worst(nameStatus, Severity.Critical);
+        if (actKit is null && verdKit is not null)
+            nameStatus = SeverityText.Worst(nameStatus, Severity.Critical);
+
+        var actElement = actElementName ?? "";
+        var verdElement = element?.Name ?? "";
+        var rdElement = rd?.ElementName ?? "";
+        var elementNameStatus = EmitField(actLabel, cipher, "Наименование элемента", actElement, rdElement, verdElement, "");
+
+        var rdElementNo = rd?.ElementNo ?? "";
+        var verdElementNo = element?.Number ?? "";
+        var actElementNo = _currentElement;
+        var elementNoStatus = Severity.Ok;
+        if (rd is not null && element is not null && rdElementNo.Length == 0)
+        {
+            elementNoStatus = Severity.Critical;
+            _findings.Add(new Finding(
+                actLabel, cipher, "Номер элемента", "", verdElementNo, Severity.Critical, "",
+                _currentElement, TextMatch.ForReport(actElementNo), "", TextMatch.ForReport(verdElementNo), "",
+                _currentActPath));
+        }
+        else
+        {
+            elementNoStatus = EmitField(actLabel, cipher, "Номер элемента", actElementNo, rdElementNo, verdElementNo, "");
+        }
+
+        var pdfState = rd is null ? "нет" : "есть";
+        var sigState = rd is null ? "нет" : rd.SignaturePath is null ? "нет" : "есть";
+        var fileStatus = Severity.Ok;
+        if (rd is null && _rdFilesLoaded && actKit is not null)
+        {
+            fileStatus = Severity.Warning;
+            Add(actLabel, cipher, "Файл комплекта РД", cipher, "", Severity.Warning, "");
+        }
+
         var surnameStatus = Severity.Ok;
+        var missingSigners = "";
+        if (rd is not null)
+        {
+            (surnameStatus, missingSigners) = AuditSigners(actLabel, cipher, rd);
+            if (rd.SignaturePath is null)
+                fileStatus = SeverityText.Worst(fileStatus, Severity.Critical);
+        }
+
         var presence = rd is null
             ? (_rdFilesLoaded ? "файл не загружен" : "файл не прикладывался")
             : actKit is null ? "нет в актах" : "загружен";
 
-        if (rd is not null)
-        {
-            if (!string.IsNullOrWhiteSpace(rd.CipherFromText) && !string.IsNullOrWhiteSpace(rd.CipherFromFileName))
-            {
-                var cipherStatus = TextCheck(actLabel, cipher, "Шифр файла и титула", rd.CipherFromFileName, rd.CipherFromText,
-                    "Шифр в имени файла и шифр, прочитанный с титульного листа.");
-                rdNameStatus = SeverityText.Worst(rdNameStatus, cipherStatus);
-            }
-
-            if (verdKit is not null)
-                rdNameStatus = SeverityText.Worst(rdNameStatus,
-                    TextCheck(actLabel, cipher, "Наименование комплекта: РД и ВЭРД", rd.KitName, verdKit.Name,
-                        "Наименование на титуле (строки после «РАБОЧАЯ ДОКУМЕНТАЦИЯ» до шифра) и столбец E ВЭРД."));
-            if (actKit is not null)
-                rdNameStatus = SeverityText.Worst(rdNameStatus,
-                    TextCheck(actLabel, cipher, "Наименование комплекта: РД и акт", rd.KitName, actKit.Name,
-                        "Наименование на титуле комплекта и наименование в таблице комплектов акта."));
-
-            if (element is not null)
-            {
-                if (rd.ElementNo.Length == 0)
-                {
-                    rdElementStatus = Severity.Critical;
-                    Add(actLabel, cipher, "Номер элемента на титуле РД", "", element.Number, Severity.Critical,
-                        "На титуле не найдена строка «Этап 7.xx …». Ожидался элемент " + element.Number + ".");
-                }
-                else
-                {
-                    rdElementStatus = TextCheck(actLabel, cipher, "Номер элемента: РД и ВЭРД", rd.ElementNo, element.Number,
-                        "Номер этапа с титульного листа и номер элемента ВЭРД, к которому относится шифр.");
-                }
-
-                rdElementStatus = SeverityText.Worst(rdElementStatus,
-                    TextCheck(actLabel, cipher, "Наименование элемента: РД и ВЭРД", rd.ElementName, element.Name,
-                        "Наименование после «Этап 7.xx» на титуле и столбец B ВЭРД. Опечатка вроде «соружения» / «сооружения» — критичное расхождение."));
-            }
-
-            if (!string.IsNullOrWhiteSpace(actElementName))
-                rdElementStatus = SeverityText.Worst(rdElementStatus,
-                    TextCheck(actLabel, cipher, "Наименование элемента: РД и акт", rd.ElementName, actElementName,
-                        "Наименование элемента на титуле РД и наименование элемента в акте."));
-
-            surnameStatus = CheckSurnames(actLabel, cipher, rd);
-        }
-
-        var overall = SeverityText.Worst(nameStatus, rdNameStatus, rdElementStatus, surnameStatus);
+        var overall = SeverityText.Worst(cipherStatus, nameStatus, elementNameStatus, elementNoStatus, fileStatus, surnameStatus);
         return new KitResult
         {
-            ElementNo = element?.Number ?? rd?.ElementNo ?? "",
+            ElementNo = element?.Number ?? rd?.ElementNo ?? actElementNo,
             ActName = actLabel,
+            ActNo = actElementNo.Length > 0 ? actElementNo : "—",
+            SourcePath = actPath,
+            AdvanceNet = advance,
             Cipher = cipher,
+            ActCipher = actCipher,
+            VerdCipher = verdCipher,
+            TitleCipher = shownTitle,
+            CipherStatus = cipherStatus,
             DgpCode = dgp,
-            ActKitName = OneLine(actKit?.Name),
-            VerdKitName = OneLine(verdKit?.Name),
-            NameStatus = actKit is null && verdKit is null ? Severity.Ok : nameStatus,
+            ActKitName = OneLine(actName),
+            VerdKitName = OneLine(verdName),
+            NameStatus = nameStatus,
             PaperCopies = actKit?.PaperCopies ?? "",
             ElectronicCopies = actKit?.ElectronicCopies ?? "",
             RdFileName = rd?.FileName ?? "",
-            RdCipher = rd?.CipherFromText ?? "",
-            RdKitName = OneLine(rd?.KitName),
-            RdNameStatus = rd is null ? Severity.Ok : rdNameStatus,
-            RdElementNo = rd?.ElementNo ?? "",
-            RdElementName = OneLine(rd?.ElementName),
-            RdElementStatus = rd is null ? Severity.Ok : rdElementStatus,
+            RdCipher = titleCipher,
+            RdKitName = OneLine(rdName),
+            RdNameStatus = nameStatus,
+            ActElementName = OneLine(actElement),
+            VerdElementName = OneLine(verdElement),
+            RdElementNo = rdElementNo,
+            RdElementName = OneLine(rdElement),
+            RdElementStatus = SeverityText.Worst(elementNameStatus, elementNoStatus),
+            ElementNameStatus = elementNameStatus,
+            PdfState = pdfState,
+            SigState = sigState,
             Surnames = rd is null ? "" : string.Join(", ", rd.Surnames),
+            MissingSigners = missingSigners,
             Signers = rd is null ? "" : string.Join(", ", rd.Signers),
             SurnameStatus = rd is null ? Severity.Ok : surnameStatus,
             Presence = presence,
@@ -601,49 +637,37 @@ public sealed partial class CheckingEngine
         };
     }
 
-    private Severity CheckSurnames(string actLabel, string cipher, RdDocument rd)
+    private (Severity Status, string Missing) AuditSigners(string actLabel, string cipher, RdDocument rd)
     {
+        var audit = SignerAudit.Check(
+            rd.Surnames,
+            rd.Signers,
+            rd.SignaturePath is not null,
+            rd.SignatureError,
+            _options.IgnoredSigners);
+
         if (rd.SignaturePath is null)
         {
-            Add(actLabel, cipher, "Электронная подпись", rd.FileName, "", Severity.Critical,
-                "Рядом с файлом комплекта нет отсоединённой подписи «" + rd.FileName + ".sig». Это критично.");
-            return Severity.Critical;
+            Add(actLabel, cipher, "Электронная подпись", rd.FileName, "", Severity.Critical, "");
+            return (Severity.Critical, "");
         }
 
         if (!string.IsNullOrWhiteSpace(rd.SignatureError))
         {
-            Add(actLabel, cipher, "Электронная подпись", rd.SignaturePath, rd.SignatureError, Severity.Critical,
-                "Файл подписи найден, но сертификаты подписантов прочитать не удалось.");
-            return Severity.Critical;
+            Add(actLabel, cipher, "Электронная подпись", rd.SignaturePath ?? "", rd.SignatureError, Severity.Critical, "");
+            return (Severity.Critical, "");
         }
 
-        var document = rd.Surnames.Where(s => !SurnameStem.IsIgnored(s, _options.IgnoredSigners)).ToList();
-        var signers = rd.Signers.Where(s => !SurnameStem.IsIgnored(s, _options.IgnoredSigners)).ToList();
-        var status = Severity.Ok;
-        if (document.Count == 0 && rd.Surnames.Count == 0)
+        if (audit.NoSurnames)
         {
-            Add(actLabel, cipher, "Фамилии в комплекте", "", string.Join(", ", rd.Signers), Severity.Critical,
-                "");
-            status = Severity.Critical;
+            Add(actLabel, cipher, "Фамилии в комплекте", "", string.Join(", ", rd.Signers), Severity.Critical, "");
+            return (Severity.Critical, "");
         }
 
-        foreach (var surname in document)
-        {
-            if (signers.Any(s => SurnameStem.Same(s, surname)))
-                continue;
-            status = Severity.Critical;
+        foreach (var surname in audit.Missing)
             Add(actLabel, cipher, "Фамилия без подписи", surname, string.Join(", ", rd.Signers), Severity.Critical, "");
-        }
 
-        foreach (var signer in signers)
-        {
-            if (document.Any(s => SurnameStem.Same(s, signer)))
-                continue;
-            status = SeverityText.Worst(status, Severity.Warning);
-            Add(actLabel, cipher, FindingGrouper.SignerMissing, signer, string.Join(", ", rd.Surnames), Severity.Warning, "");
-        }
-
-        return status;
+        return (audit.Status, string.Join(", ", audit.Missing));
     }
 
     private void NoteInternalArithmetic(string label, decimal? net, decimal? vat, decimal? gross)
@@ -675,18 +699,9 @@ public sealed partial class CheckingEngine
             "Суммы внутри акта не сходятся: " + string.Join("; ", messages) + ". Ставка НДС в проверке — 22%, допуск 0,01 руб.");
     }
 
-    private Severity TextCheck(string act, string kit, string check, string? left, string? right, string what)
-    {
-        var severity = TextMatch.Compare(left, right);
-        if (severity == Severity.Ok)
-            return severity;
-        Add(act, kit, check, OneLine(left), OneLine(right), severity, "");
-        _ = what;
-        return severity;
-    }
-
     private void Add(string act, string kit, string check, string valueA, string valueB, Severity severity, string explanation)
     {
+        _ = explanation;
         var (inAct, inRd, inVerd, inVesr) = FindingSources.Place(check, valueA, valueB);
         _findings.Add(new Finding(
             act,
@@ -695,12 +710,102 @@ public sealed partial class CheckingEngine
             valueA,
             valueB,
             severity,
-            explanation,
+            "",
             _currentElement,
             inAct,
             inRd,
             inVerd,
-            inVesr));
+            inVesr,
+            _currentActPath));
+    }
+
+    private static Severity CompareMany(params string[] values)
+    {
+        var filled = values.Where(value => !string.IsNullOrWhiteSpace(value)).ToList();
+        var severity = Severity.Ok;
+        for (var i = 0; i < filled.Count; i++)
+        {
+            for (var j = i + 1; j < filled.Count; j++)
+                severity = SeverityText.Worst(severity, TextMatch.Compare(filled[i], filled[j]));
+        }
+        return severity;
+    }
+
+    private static (string Left, string Right) FirstMismatch(params string[] values)
+    {
+        var filled = values.Where(value => !string.IsNullOrWhiteSpace(value)).ToList();
+        foreach (var left in filled)
+        {
+            foreach (var right in filled)
+            {
+                if (TextMatch.Compare(left, right) != Severity.Ok)
+                    return (left, right);
+            }
+        }
+        return ("", "");
+    }
+
+    private Severity EmitField(
+        string act,
+        string kit,
+        string check,
+        string inAct,
+        string inRd,
+        string inVerd,
+        string inVesr,
+        params string[] also)
+    {
+        var compare = new List<string>();
+        void Take(string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                compare.Add(value);
+        }
+
+        Take(inAct);
+        Take(inRd);
+        Take(inVerd);
+        Take(inVesr);
+        foreach (var value in also)
+            Take(value);
+
+        var severity = Severity.Ok;
+        string left = "";
+        string right = "";
+        for (var i = 0; i < compare.Count; i++)
+        {
+            for (var j = i + 1; j < compare.Count; j++)
+            {
+                var pair = TextMatch.Compare(compare[i], compare[j]);
+                if (pair == Severity.Ok)
+                    continue;
+                if (left.Length == 0 || pair > severity)
+                {
+                    left = compare[i];
+                    right = compare[j];
+                }
+                severity = SeverityText.Worst(severity, pair);
+            }
+        }
+
+        if (severity == Severity.Ok)
+            return severity;
+
+        _findings.Add(new Finding(
+            act,
+            kit,
+            check,
+            TextMatch.ForReport(left),
+            TextMatch.ForReport(right),
+            severity,
+            "",
+            _currentElement,
+            TextMatch.ForReport(inAct),
+            TextMatch.ForReport(inRd),
+            TextMatch.ForReport(inVerd),
+            TextMatch.ForReport(inVesr),
+            _currentActPath));
+        return severity;
     }
 
     private static string ElementTitle(string costName)

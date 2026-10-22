@@ -34,7 +34,7 @@ public partial class MainWindow : Window
         Opened += (_, _) =>
         {
             if (_settings.CheckUpdatesOnStart)
-                _ = RunUpdateCheck(interactive: false);
+                _ = UpdateFlow.RunAsync(this, interactive: false);
         };
     }
 
@@ -188,71 +188,6 @@ public partial class MainWindow : Window
         await new SettingsWindow(_settings).ShowDialog(this);
         _settings = AppSettings.Load();
         _model.Options = _settings.ToOptions();
-    }
-
-    private async Task RunUpdateCheck(bool interactive)
-    {
-        var result = await UpdateChecker.CheckAsync();
-        if (result.Kind == UpdateCheckKind.Offline)
-            return;
-        if (!interactive && result.Kind == UpdateCheckKind.UpToDate)
-            return;
-        if (!interactive && result.Kind == UpdateCheckKind.Unavailable)
-        {
-            _model.StatusText = result.Message;
-            return;
-        }
-        if (result.Kind == UpdateCheckKind.UpToDate)
-        {
-            await ShowUpdateDialog(result.Message, offerPage: false);
-            return;
-        }
-
-        await ShowUpdateDialog(result.Message, offerPage: true);
-    }
-
-    private async Task ShowUpdateDialog(string message, bool offerPage)
-    {
-        var panel = new StackPanel { Margin = new Thickness(20), Spacing = 16 };
-        panel.Children.Add(new TextBlock
-        {
-            Text = message,
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 14,
-        });
-        var buttons = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            HorizontalAlignment = HorizontalAlignment.Right,
-        };
-        var dialog = new Window
-        {
-            Title = "Обновление",
-            Width = 520,
-            SizeToContent = SizeToContent.Height,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            CanResize = false,
-            Background = Brushes.White,
-            Content = panel,
-        };
-        if (offerPage)
-        {
-            var open = new Button { Content = "Открыть страницу релизов", Classes = { "primary" } };
-            open.Click += async (_, _) =>
-            {
-                var launcher = TopLevel.GetTopLevel(this)?.Launcher;
-                if (launcher is not null)
-                    await launcher.LaunchUriAsync(new Uri(AppInfo.ReleasesPage));
-            };
-            buttons.Children.Add(open);
-        }
-
-        var close = new Button { Content = "Закрыть" };
-        close.Click += (_, _) => dialog.Close();
-        buttons.Children.Add(close);
-        panel.Children.Add(buttons);
-        await dialog.ShowDialog(this);
     }
 
     private static void DropInto(DragEventArgs e, Action<string> add)

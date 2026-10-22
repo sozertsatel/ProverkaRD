@@ -31,9 +31,17 @@ public class TextMatchTests
     }
 
     [Fact]
-    public void Real_typo_stays_critical()
+    public void One_or_two_letter_typo_is_formatting_but_missing_pk_and_digits_are_critical()
     {
-        Assert.Equal(Severity.Critical, TextMatch.Compare("соружения", "сооружения"));
+        Assert.Equal(Severity.Formatting, TextMatch.Compare("соружения", "сооружения"));
+        Assert.Equal(Severity.Formatting, TextMatch.Compare("насыпью Конструкции", "насыпью. Конструкции"));
+        Assert.Equal(Severity.Formatting, TextMatch.Compare("Сооружения", "\u0043ооружения"));
+        Assert.Equal(Severity.Formatting, TextMatch.Compare("Вокзал", "Вокзал\u200B"));
+        Assert.NotEqual(Severity.Ok, TextMatch.Compare("Вокзал", "Вокзал\u200B"));
+        Assert.Equal(Severity.Ok, TextMatch.Compare("Вокзал", "Вокзал"));
+        Assert.Equal(Severity.Critical, TextMatch.Compare("на 04+60,00", "на ПК04+60,00"));
+        Assert.Equal(Severity.Critical, TextMatch.Compare("ПК01+91,66", "ПК01+91,67"));
+        Assert.Equal(Severity.Critical, TextMatch.Compare("мост", "путь"));
     }
 
     [Fact]
@@ -108,12 +116,11 @@ public class SampleTests
         var report = Run();
         var kit = report.Kits.Single(k => k.Cipher.Contains("ИС21-27-КЖ1", StringComparison.OrdinalIgnoreCase));
         Assert.Equal("7.31", kit.ElementNo);
-        Assert.Equal(Severity.Critical, kit.RdElementStatus);
         Assert.Contains(report.Findings, f =>
             f.Kit.Contains("КЖ1")
-            && f.Severity == Severity.Critical
-            && (f.ValueA + f.ValueB).Contains("сооружения")
-            && (f.ValueA + f.ValueB).Contains("соружения"));
+            && f.Severity == Severity.Formatting
+            && (f.ValueA + f.ValueB + f.InRd + f.InVerd).Contains("сооружения")
+            && (f.ValueA + f.ValueB + f.InRd + f.InVerd).Contains("соружения"));
 
         var surnames = kit.Surnames.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         foreach (var expected in new[] { "Ермолич", "Корецкий", "Щербаков", "Булычев", "Письмак", "Сапегин", "Янков" })
@@ -126,9 +133,9 @@ public class SampleTests
         Assert.DoesNotContain(signers, s => s.Contains("Сертум", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(signers, s => s.Contains("ТАКСКОМ", StringComparison.OrdinalIgnoreCase));
 
-        Assert.Equal(Severity.Warning, kit.SurnameStatus);
-        Assert.Contains(report.Findings, f => f.Severity == Severity.Warning && f.ValueA.Contains("Гирсова"));
-        Assert.Contains(report.Findings, f => f.Severity == Severity.Warning && f.ValueA.Contains("Дутчак"));
+        Assert.DoesNotContain(report.Findings, f => f.CheckName == FindingGrouper.SignerMissing);
+        Assert.DoesNotContain(report.Findings, f => f.ValueA.Contains("Гирсова") || f.ValueA.Contains("Дутчак"));
+        Assert.NotEqual(Severity.Warning, kit.SurnameStatus);
         Assert.DoesNotContain(report.Findings, f =>
             f.Severity == Severity.Critical
             && f.CheckName == "Фамилия без подписи"

@@ -29,6 +29,10 @@ public static class FindingGrouper
             {
                 var key = finding.CheckName
                           + "\n" + finding.Severity
+                          + "\n" + TextMatch.Normalize(finding.InAct)
+                          + "\n" + TextMatch.Normalize(finding.InRd)
+                          + "\n" + TextMatch.Normalize(finding.InVerd)
+                          + "\n" + TextMatch.Normalize(finding.InVesr)
                           + "\n" + TextMatch.Normalize(finding.ValueA)
                           + "\n" + TextMatch.Normalize(finding.ValueB);
                 AddTo(duplicateGroups, key, located);
@@ -61,7 +65,7 @@ public static class FindingGrouper
         {
             Locations =
             [
-                new FindingPlace(finding.Act, finding.ElementNo, finding.Kit),
+                new FindingPlace(finding.Act, finding.ElementNo, finding.Kit, finding.ActPath),
             ],
         };
     }

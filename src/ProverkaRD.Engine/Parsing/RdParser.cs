@@ -27,7 +27,8 @@ public static partial class RdParser
     private static readonly string[] RoleMarkers =
     [
         "разраб", "проверил", "пров.", "гип", "н.контр", "н. контр", "нормоконтр", "норм.контр",
-        "норм. контр", "нач.отд", "нач. отд", "составил", "утверд", "гл. спец", "гл.спец", "исполнил",
+        "норм. контр", "нач.отд", "нач. отд", "начальник отдела", "составил", "утверд", "утв.",
+        "гл. спец", "гл.спец", "исполнил", "исп.",
     ];
 
     public static RdDocument Parse(string path)
@@ -36,13 +37,17 @@ public static partial class RdParser
         var cipherFromName = FirstCipher(Path.GetFileNameWithoutExtension(path));
         string titleText = "";
         string fullText = "";
+        List<string> surnames = [];
         try
         {
             var ext = Path.GetExtension(path);
             if (ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
-                (titleText, fullText) = ReadPdf(path);
+                (titleText, fullText, surnames) = ReadPdf(path);
             else if (ext.Equals(".docx", StringComparison.OrdinalIgnoreCase))
+            {
                 titleText = fullText = ReadDocx(path);
+                surnames = CollectSurnames([new RdPage(1, titleText, "")]);
+            }
             else
                 errors.Add("Формат комплекта не поддержан: " + ext);
         }
@@ -54,8 +59,6 @@ public static partial class RdParser
         var title = ExtractTitle(titleText);
         if (title.Cipher is null)
             title = ExtractTitle(fullText);
-
-        var surnames = ExtractSurnames(string.IsNullOrWhiteSpace(titleText) ? fullText : titleText + "\n" + fullText);
         string? signaturePath = null;
         IReadOnlyList<string> signers = [];
         string? signatureError = null;
@@ -95,29 +98,92 @@ public static partial class RdParser
         };
     }
 
-    private static (string Title, string Full) ReadPdf(string path)
+    private static (string Title, string Full, List<string> Surnames) ReadPdf(string path)
     {
         using var pdf = PdfDocument.Open(path);
+        var pages = new List<RdPage>();
         var title = new StringBuilder();
         var full = new StringBuilder();
         var index = 0;
         foreach (var page in pdf.GetPages())
         {
             index++;
-            string text;
+            string plain;
             try
             {
-                text = page.Text ?? "";
+                plain = page.Text ?? "";
             }
             catch
             {
-                text = "";
+                plain = "";
             }
+
+            var (lines, stamp) = PageLayout(page, plain);
+            var text = lines.Count == 0 ? plain : string.Join("\n", lines);
+            pages.Add(new RdPage(index, text, stamp));
             full.AppendLine(text);
             if (index <= 2)
                 title.AppendLine(text);
         }
-        return (title.ToString(), full.ToString());
+
+        return (title.ToString(), full.ToString(), CollectSurnames(pages));
+    }
+
+    private static (List<string> Lines, string Stamp) PageLayout(UglyToad.PdfPig.Content.Page page, string fallback)
+    {
+        try
+        {
+            var words = page.GetWords().Where(word => !string.IsNullOrWhiteSpace(word.Text)).ToList();
+            if (words.Count == 0)
+                return (SplitLines(fallback), Tail(fallback));
+
+            var lines = GroupLines(words);
+            var stampWords = words.Where(word => InStamp(word.BoundingBox, page.Width, page.Height)).ToList();
+            var stamp = stampWords.Count == 0 ? Tail(fallback) : string.Join("\n", GroupLines(stampWords));
+            return (lines, stamp);
+        }
+        catch
+        {
+            return (SplitLines(fallback), Tail(fallback));
+        }
+    }
+
+    private static bool InStamp(UglyToad.PdfPig.Core.PdfRectangle box, double width, double height)
+    {
+        var bottomBand = box.Bottom <= height * 0.36;
+        var corner = box.Left >= width * 0.55 && box.Bottom <= height * 0.58;
+        return bottomBand || corner;
+    }
+
+    private static List<string> GroupLines(List<UglyToad.PdfPig.Content.Word> words)
+    {
+        var ordered = words.OrderByDescending(word => word.BoundingBox.Bottom).ToList();
+        var lines = new List<List<UglyToad.PdfPig.Content.Word>>();
+        foreach (var word in ordered)
+        {
+            var line = lines.FirstOrDefault(existing =>
+                Math.Abs(existing[0].BoundingBox.Bottom - word.BoundingBox.Bottom) <= 3.5);
+            if (line is null)
+                lines.Add([word]);
+            else
+                line.Add(word);
+        }
+
+        return lines
+            .Select(line => string.Join(" ", line.OrderBy(word => word.BoundingBox.Left).Select(word => word.Text.Trim())))
+            .Where(text => text.Length > 0)
+            .ToList();
+    }
+
+    private static List<string> SplitLines(string text) =>
+        text.Replace('\r', '\n').Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    private static string Tail(string text)
+    {
+        var lines = SplitLines(text);
+        if (lines.Count == 0)
+            return "";
+        return string.Join("\n", lines.TakeLast(Math.Min(12, lines.Count)));
     }
 
     private static string ReadDocx(string path)
@@ -196,7 +262,44 @@ public static partial class RdParser
         return name.Trim(' ', '.', '-', '–');
     }
 
-    public static List<string> ExtractSurnames(string text)
+    public sealed record RdPage(int Number, string Text, string Stamp);
+
+    /// <summary>
+    /// Фамилии тома: два титульных листа, штамп на каждом листе и первый лист ВОР.
+    /// </summary>
+    public static List<string> CollectSurnames(IReadOnlyList<RdPage> pages)
+    {
+        var found = new List<string>();
+        var vorTaken = false;
+        foreach (var page in pages)
+        {
+            if (page.Number <= 2)
+                found.AddRange(SurnamesFromRoleLines(page.Text));
+
+            found.AddRange(SurnamesFromRoleLines(page.Stamp));
+            found.AddRange(BareStampNames(page.Stamp));
+
+            if (vorTaken || !IsVorPage(page.Text))
+                continue;
+            vorTaken = true;
+            found.AddRange(SurnamesFromRoleLines(page.Text));
+        }
+
+        return DistinctSurnames(found);
+    }
+
+    public static List<string> ExtractSurnames(string text) =>
+        DistinctSurnames(SurnamesFromRoleLines(text));
+
+    private static bool IsVorPage(string text)
+    {
+        var normalized = TextMatch.Normalize(text);
+        return normalized.Contains("объемов работ", StringComparison.Ordinal)
+               || normalized.Contains("объем работ", StringComparison.Ordinal)
+               || normalized.Contains("ведомость объемов", StringComparison.Ordinal);
+    }
+
+    private static List<string> SurnamesFromRoleLines(string text)
     {
         var found = new List<string>();
         if (string.IsNullOrWhiteSpace(text))
@@ -205,42 +308,51 @@ public static partial class RdParser
         var lines = text.Replace('\r', '\n').Split('\n');
         for (var i = 0; i < lines.Length; i++)
         {
-            var line = lines[i];
-            if (IsRoleLine(line))
-            {
-                var onLine = SurnamesOnLine(line);
-                found.AddRange(onLine);
-                if (onLine.Count == 0 && i + 1 < lines.Length)
-                    found.AddRange(SurnamesOnLine(lines[i + 1]));
+            if (!IsRoleLine(lines[i]))
                 continue;
-            }
-
-            if (IsStampLine(line) || (line.Trim().Length is > 0 and <= 80 && HasInitials(line)))
-                found.AddRange(SurnamesOnLine(line));
+            var onLine = SurnamesOnLine(lines[i]);
+            found.AddRange(onLine);
+            if (onLine.Count == 0 && i + 1 < lines.Length)
+                found.AddRange(SurnamesOnLine(lines[i + 1]));
         }
 
-        return DistinctSurnames(found);
+        return found;
+    }
+
+    private static List<string> BareStampNames(string stamp)
+    {
+        var found = new List<string>();
+        if (string.IsNullOrWhiteSpace(stamp))
+            return found;
+        foreach (var line in stamp.Replace('\r', '\n').Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length is 0 or > 60 || IsRoleLine(trimmed))
+                continue;
+            found.AddRange(SurnamesOnLine(trimmed));
+        }
+        return found;
     }
 
     private static bool IsRoleLine(string line)
     {
         var normalized = TextMatch.Normalize(line);
-        return RoleMarkers.Any(marker => normalized.Contains(TextMatch.Normalize(marker), StringComparison.Ordinal));
+        foreach (var marker in RoleMarkers)
+        {
+            var token = TextMatch.Normalize(marker);
+            if (token.Length == 0)
+                continue;
+            var index = normalized.IndexOf(token, StringComparison.Ordinal);
+            if (index < 0)
+                continue;
+            var before = index == 0 || !char.IsLetter(normalized[index - 1]);
+            var after = index + token.Length >= normalized.Length || !char.IsLetter(normalized[index + token.Length]);
+            var prefix = token is "разраб" or "утверд" or "исполн" or "нормоконтр" or "составил" or "проверил";
+            if (before && (after || prefix))
+                return true;
+        }
+        return false;
     }
-
-    private static bool IsStampLine(string line)
-    {
-        var normalized = TextMatch.Normalize(line);
-        var stamp = normalized.Contains("инв", StringComparison.Ordinal)
-                    || normalized.Contains("подпись", StringComparison.Ordinal)
-                    || normalized.Contains("подп", StringComparison.Ordinal)
-                    || normalized.Contains("взамен", StringComparison.Ordinal)
-                    || normalized.Contains("стадия", StringComparison.Ordinal);
-        return stamp && HasInitials(line);
-    }
-
-    private static bool HasInitials(string line) =>
-        InitialsThenSurname().IsMatch(line) || SurnameThenInitials().IsMatch(line);
 
     private static List<string> SurnamesOnLine(string line)
     {
