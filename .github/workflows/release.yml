@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish ProverkaRD.exe
+        run: >
+          dotnet publish src/ProverkaRD.App
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -p:DebugType=none
+          -p:DebugSymbols=false
+          -o ${{ github.workspace }}/publish
+
+      - name: Update rolling pre-release latest-build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $ErrorActionPreference = "Continue"
+          $exe = Join-Path $env:GITHUB_WORKSPACE "publish/ProverkaRD.exe"
+          if (-not (Test-Path $exe)) { throw "ProverkaRD.exe was not published." }
+          $tag = "latest-build"
+          $notes = "Сборка с коммита $env:GITHUB_SHA"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag $exe --repo $env:GITHUB_REPOSITORY --prerelease --latest=false --title "latest-build" --notes $notes
+            if ($LASTEXITCODE -ne 0) { throw "Не удалось создать релиз latest-build." }
+          } else {
+            gh release delete-asset $tag "ProverkaRD.exe" --repo $env:GITHUB_REPOSITORY --yes
+            gh release upload $tag $exe --repo $env:GITHUB_REPOSITORY --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Не удалось загрузить ProverkaRD.exe в latest-build." }
+            gh release edit $tag --repo $env:GITHUB_REPOSITORY --prerelease --latest=false --notes $notes
+          }
+
+      - name: Create version release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $ErrorActionPreference = "Continue"
+          $exe = Join-Path $env:GITHUB_WORKSPACE "publish/ProverkaRD.exe"
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag $exe --repo $env:GITHUB_REPOSITORY --title $tag --notes "Проверка РД $tag"
+            if ($LASTEXITCODE -ne 0) { throw "Не удалось создать релиз $tag." }
+          } else {
+            gh release upload $tag $exe --repo $env:GITHUB_REPOSITORY --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Не удалось загрузить ProverkaRD.exe в релиз $tag." }
+          }
