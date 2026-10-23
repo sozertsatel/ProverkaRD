@@ -257,7 +257,10 @@ public class StampAndSignatureTests
             var summary = book.Worksheet("Сводка");
             Assert.Contains("Предупреждения: 1", summary.Cell(2, 1).GetString());
             Assert.Equal(1d, summary.Cell(6, 5).GetDouble());
-            Assert.Equal("Предупреждение", book.Worksheet("Реестр комплекта").Cell(5, 8).GetString());
+            var opis = book.Worksheet("Реестр комплекта");
+            Assert.Equal("Файл PDF", opis.Cell(4, 5).GetString());
+            Assert.Equal("Письмо.pdf", opis.Cell(5, 5).GetString());
+            Assert.Contains("Комплектов: 1", opis.Cell(6, 5).GetString());
         }
         finally
         {
@@ -410,24 +413,25 @@ public class StampAndSignatureTests
             using var book = new XLWorkbook(reportPath);
             var sheet = book.Worksheet("Реестр комплекта");
             Assert.Equal(SeverityPalette.FontName, sheet.Style.Font.FontName);
-            Assert.Equal("Файл", sheet.Cell(4, 1).GetString());
-            Assert.Equal("Шифр", sheet.Cell(4, 2).GetString());
-            Assert.Equal("Элемент", sheet.Cell(4, 3).GetString());
-            Assert.Equal("Фамилии штампа", sheet.Cell(4, 4).GetString());
-            Assert.Equal("Подписанты .sig", sheet.Cell(4, 5).GetString());
-            Assert.Equal("Сертификат", sheet.Cell(4, 6).GetString());
-            Assert.Equal("Подпись", sheet.Cell(4, 7).GetString());
-            Assert.Equal("Итог", sheet.Cell(4, 8).GetString());
+            Assert.Contains("Опись комплекта", sheet.Cell(1, 1).GetString());
+            Assert.Equal("№ п/п", sheet.Cell(4, 1).GetString());
+            Assert.Equal("Элемент", sheet.Cell(4, 2).GetString());
+            Assert.Equal("Шифр комплекта", sheet.Cell(4, 3).GetString());
+            Assert.Equal("Наименование", sheet.Cell(4, 4).GetString());
+            Assert.Equal("Файл PDF", sheet.Cell(4, 5).GetString());
+            Assert.Equal("Подпись (.sig)", sheet.Cell(4, 6).GetString());
+            Assert.Equal("Подписанты", sheet.Cell(4, 7).GetString());
             Assert.Equal(4, sheet.SheetView.SplitRow);
+            Assert.Equal(1, sheet.PageSetup.PagesWide);
             Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(4, 1).Style.Border.TopBorder);
-            Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(4, 8).Style.Border.RightBorder);
-            Assert.Equal("100-20-3000-А-КЖ1.pdf", sheet.Cell(5, 1).GetString());
-            Assert.Contains("Фролов", sheet.Cell(5, 4).GetString(), StringComparison.Ordinal);
-            Assert.Contains("Иван", sheet.Cell(5, 5).GetString(), StringComparison.Ordinal);
-            Assert.Equal("ОК", sheet.Cell(5, 7).GetString());
-            Assert.Equal("ОК", sheet.Cell(5, 8).GetString());
+            Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(4, 7).Style.Border.RightBorder);
+            Assert.Equal("100-20-3000-А-КЖ1.pdf", sheet.Cell(5, 5).GetString());
+            Assert.Contains("Фролов", sheet.Cell(5, 7).GetString(), StringComparison.Ordinal);
+            Assert.Contains("Иван", sheet.Cell(5, 7).GetString(), StringComparison.Ordinal);
+            Assert.Contains("Комплектов: 1", sheet.Cell(6, 5).GetString());
+            Assert.Contains("Подписано: 1", sheet.Cell(6, 6).GetString());
             Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(5, 1).Style.Border.LeftBorder);
-            Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(5, 8).Style.Border.RightBorder);
+            Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(5, 7).Style.Border.RightBorder);
         }
         finally
         {

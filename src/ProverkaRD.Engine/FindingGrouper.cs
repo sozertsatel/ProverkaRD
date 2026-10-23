@@ -102,7 +102,10 @@ public static class FindingGrouper
             Kit = kits.Count == 0 ? first.Kit : string.Join(", ", kits),
             ElementNo = elements.Count == 0 ? first.ElementNo : string.Join(", ", elements),
             ValueB = signer ? "" : first.ValueB,
-            Explanation = "",
+            Explanation = string.Join(" ", group
+                .Select(item => item.Explanation)
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .Distinct(StringComparer.Ordinal)),
             ErrorWhere = where.Count == 0 ? "" : string.Join(", ", where),
             Locations = locations,
         };

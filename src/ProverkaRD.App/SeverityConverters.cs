@@ -5,6 +5,17 @@ using ProverkaRD.Engine;
 
 namespace ProverkaRD;
 
+public sealed class MissingBrushConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is true
+            ? new SolidColorBrush(Color.Parse("#B91C1C"))
+            : new SolidColorBrush(Color.Parse("#1F2937"));
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
 public sealed class SeverityTextConverter : IValueConverter
 {
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>

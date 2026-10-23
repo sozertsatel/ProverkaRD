@@ -672,9 +672,9 @@ public class EngineRulesTests
                 .First(r => findings.Cell(r, 4).GetString() == "Наименование комплекта" && findings.Cell(r, 9).GetString().Contains("КМ1"));
             Assert.Equal(SourceBlame.InRd, findings.Cell(km1, 10).GetString());
             var kits = outBook.Worksheet("Комплекты");
-            Assert.Contains(SourceBlame.InRd, kits.Cell(6, 11).GetString());
-            Assert.Contains(SourceBlame.InAct, kits.Cell(7, 11).GetString());
-            Assert.Equal("Критично", kits.Cell(8, 11).GetString());
+            Assert.Contains(SourceBlame.InRd, kits.Cell(6, 10).GetString());
+            Assert.Contains(SourceBlame.InAct, kits.Cell(7, 10).GetString());
+            Assert.Equal("Критично", kits.Cell(8, 10).GetString());
         }
         finally
         {
@@ -888,14 +888,15 @@ public class EngineRulesTests
             ReportWriter.Write(report, reportPath, "0.0.3");
             using var book = new XLWorkbook(reportPath);
             var kits = book.Worksheet("Комплекты");
-            Assert.Equal("1. Шифр", kits.Cell(4, 4).GetString());
-            Assert.Equal("2. Наименование комплекта", kits.Cell(4, 8).GetString());
-            Assert.Equal("4. Файлы", kits.Cell(4, 16).GetString());
-            Assert.Equal("5. Подписи", kits.Cell(4, 18).GetString());
-            Assert.Equal("Погашение аванса без НДС", kits.Cell(5, 3).GetString());
-            Assert.Equal(168027.54m, kits.Cell(6, 3).GetValue<decimal>());
-            Assert.Equal(XLDataType.Number, kits.Cell(6, 3).DataType);
-            Assert.Equal("0,00", kits.Cell(6, 3).Style.NumberFormat.Format);
+            Assert.Equal("1. Шифр", kits.Cell(4, 3).GetString());
+            Assert.Equal("2. Наименование комплекта", kits.Cell(4, 7).GetString());
+            Assert.Equal("4. Файлы", kits.Cell(4, 15).GetString());
+            Assert.Equal("5. Подписи", kits.Cell(4, 17).GetString());
+            Assert.Equal("Погашение аванса без НДС", kits.Cell(5, 20).GetString());
+            Assert.Equal("Итог", kits.Cell(5, 21).GetString());
+            Assert.Equal(168027.54m, kits.Cell(6, 20).GetValue<decimal>());
+            Assert.Equal(XLDataType.Number, kits.Cell(6, 20).DataType);
+            Assert.Equal("0,00", kits.Cell(6, 20).Style.NumberFormat.Format);
             var summary = book.Worksheet("Сводка");
             Assert.Equal("Критично", summary.Cell(6, 2).GetString());
             var findings = book.Worksheet("Замечания");

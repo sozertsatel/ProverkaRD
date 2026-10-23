@@ -186,6 +186,7 @@ public sealed partial class CheckingEngine
         var usedRd = new HashSet<RdDocument>();
         foreach (var act in acts.OrderBy(a => ElementSortKey(ResolvedPreview(a)), IntArrayComparer.Instance))
             CheckAct(act, verdByNumber, vesr, rdByCipher, usedRd, report);
+        AbsorbLedgerRows(report, verd, vesr);
 
         foreach (var rd in rdFiles.Where(r => !usedRd.Contains(r)))
             CheckLooseRd(rd, verdByCipher, acts.Count > 0, report);
@@ -335,6 +336,15 @@ public sealed partial class CheckingEngine
         var costNameStatus = Severity.Critical;
         if (vesrByAct is not null)
             costNameStatus = EmitField(label, "—", "Наименование стоимости", actCostName, "", "", vesrByAct.Name);
+        var nameHint = VesrHints.Locate(vesr, actCostName, actCode);
+        if (element is null)
+            AttachHint(label, "Элемент в ВЭРД", nameHint);
+        if (vesr is not null && actCode.Length > 0 && vesrByAct is null)
+            AttachHint(label, "Код ДГП в ВЭСР", nameHint);
+        if (element is not null && actCode.Length > 0 && TextMatch.CodeKey(verdCode) != TextMatch.CodeKey(actCode))
+            AttachHint(label, "Код ДГП", nameHint);
+        if (costNameStatus != Severity.Ok)
+            AttachHint(label, "Наименование стоимости", nameHint);
 
         if (costLine is null && totalLine is null)
         {
@@ -369,6 +379,15 @@ public sealed partial class CheckingEngine
             netStatus = Severity.Critical;
             Add(label, "—", "Стоимость без НДС", "", vesrNet is null ? "" : TextMatch.FormatMoney(vesrNet.Value),
                 Severity.Critical, "В акте нет суммы без НДС.");
+        }
+        else if (vesrByAct is not null && vesrNet is null)
+        {
+            netStatus = Severity.Critical;
+            var problem = vesrByAct.SumProblem.Length == 0
+                ? "В строке ВЭСР по коду " + actCode + " нет суммы."
+                : vesrByAct.SumProblem;
+            Add(label, "—", "Сумма ВЭСР", TextMatch.FormatMoney(actNet.Value), problem,
+                Severity.Critical, problem);
         }
         else if (vesrNet is null)
         {
@@ -893,6 +912,8 @@ public sealed partial class CheckingEngine
         var element = elementNo.Length == 0
             ? elementName
             : elementName.Length == 0 ? elementNo : elementNo + " " + elementName;
+        var signatureName = string.IsNullOrWhiteSpace(rd.SignaturePath) ? "нет" : Path.GetFileName(rd.SignaturePath);
+        var signed = !string.IsNullOrWhiteSpace(rd.SignaturePath) && !rd.SignatureRejected;
         if (RdFileRules.IsStray(rd))
         {
             return new RegistryRow
@@ -900,6 +921,9 @@ public sealed partial class CheckingEngine
                 FileName = rd.FileName,
                 Cipher = rd.Cipher,
                 Element = element,
+                Name = OneLine(rd.KitName),
+                SignatureName = signatureName,
+                HasSignature = signed,
                 Surnames = string.Join(", ", rd.Surnames),
                 Signers = "—",
                 CertValidity = "—",
@@ -923,6 +947,9 @@ public sealed partial class CheckingEngine
             FileName = rd.FileName,
             Cipher = rd.Cipher,
             Element = element,
+            Name = OneLine(rd.KitName),
+            SignatureName = signatureName,
+            HasSignature = signed,
             Surnames = string.Join(", ", rd.Surnames),
             Signers = signerText,
             CertValidity = certText,
@@ -984,7 +1011,6 @@ public sealed partial class CheckingEngine
 
     private void Add(string act, string kit, string check, string valueA, string valueB, Severity severity, string explanation)
     {
-        _ = explanation;
         var (inAct, inRd, inVerd, inVesr) = FindingSources.Place(check, valueA, valueB);
         _findings.Add(new Finding(
             act,
@@ -993,13 +1019,49 @@ public sealed partial class CheckingEngine
             valueA,
             valueB,
             severity,
-            "",
+            explanation,
             _currentElement,
             inAct,
             inRd,
             inVerd,
             inVesr,
             _currentActPath));
+    }
+
+    private void AttachHint(string act, string check, string? hint)
+    {
+        if (string.IsNullOrWhiteSpace(hint))
+            return;
+        for (var i = _findings.Count - 1; i >= 0; i--)
+        {
+            var finding = _findings[i];
+            if (!string.Equals(finding.Act, act, StringComparison.Ordinal) || finding.CheckName != check)
+                continue;
+            if (finding.Explanation.Contains(hint, StringComparison.Ordinal))
+                return;
+            var text = string.IsNullOrWhiteSpace(finding.Explanation) ? hint : finding.Explanation.TrimEnd() + " " + hint;
+            _findings[i] = finding with { Explanation = text };
+            return;
+        }
+    }
+
+    private static void AbsorbLedgerRows(CheckReport report, VerdBook? verd, VesrBook? vesr)
+    {
+        var elements = report.Acts
+            .Select(act => TextMatch.CodeKey(act.ElementNo))
+            .Where(key => key.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+        var codes = report.Acts
+            .Select(act => TextMatch.CodeKey(act.ActCode))
+            .Where(key => key.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+        var issues = new List<LedgerRowIssue>();
+        if (verd is not null)
+            issues.AddRange(NoticeRanges.ForActs(verd.RowIssues, "ВЭРД", elements));
+        if (vesr is not null)
+            issues.AddRange(NoticeRanges.ForActs(vesr.RowIssues, "ВЭСР", codes));
+        foreach (var notice in NoticeRanges.Group(issues))
+            Remember(report, notice.Source, notice.Place, notice.Message);
     }
 
     private static Severity CompareMany(params string[] values)

@@ -115,10 +115,10 @@ public class RobustnessTests
             Assert.True(report.VerdMissing);
             Assert.Contains(report.Notices, n => n.Message.Contains("ВЭРД не загружена"));
             Assert.Contains(report.Notices, n => n.Source == "ВЭСР" && n.Message.Contains("Лист «ВЭ» не найден"));
-            Assert.Contains(report.Notices, n => n.Message.Contains("Пропущена строка-номер"));
+            Assert.DoesNotContain(report.Notices, n => n.Message.Contains("Пропущена строка-номер"));
             Assert.Contains(report.Notices, n => n.Message.Contains("Повтор кода"));
-            Assert.Equal(40, report.Notices.Count(n => n.Message.Contains("примечание или текст")));
-            Assert.Contains(report.Notices, n => n.Message.Contains("Ячейка не разобрана как сумма"));
+            Assert.DoesNotContain(report.Notices, n => n.Message.Contains("примечание или текст"));
+            Assert.DoesNotContain(report.Notices, n => n.Message.Contains("Ячейка не разобрана как сумма"));
             Assert.Contains(report.Notices, n => n.Message.Contains("Пропущен вспомогательный файл"));
             Assert.Contains(report.Notices, n => n.Message.Contains("Файл подписи не является комплектом"));
             Assert.Contains(report.Notices, n => n.Message.Contains("Это папка"));
@@ -145,7 +145,7 @@ public class RobustnessTests
                 .ToList();
             Assert.Equal(report.Notices.Count, messages.Count);
             Assert.Contains(messages, message => message.Contains("Лист «ВЭ» не найден"));
-            Assert.Equal(40, messages.Count(message => message.Contains("примечание или текст")));
+            Assert.DoesNotContain(messages, message => message.Contains("примечание или текст"));
         }
         finally
         {
@@ -195,27 +195,29 @@ public class RobustnessTests
             }
 
             var kits = book.Worksheet("Комплекты");
-            Assert.Equal("1. Шифр", kits.Cell(4, 4).GetString());
+            Assert.Equal("1. Шифр", kits.Cell(4, 3).GetString());
             Assert.Equal("Элемент", kits.Cell(5, 1).GetString());
             Assert.Equal("Акт", kits.Cell(5, 2).GetString());
+            Assert.Equal("В акте", kits.Cell(5, 3).GetString());
+            Assert.Equal("Погашение аванса без НДС", kits.Cell(5, 20).GetString());
             Assert.Equal(5, kits.SheetView.SplitRow);
-            Assert.Equal(2, kits.SheetView.SplitColumn);
+            Assert.Equal(3, kits.SheetView.SplitColumn);
             Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 1).Style.Border.LeftBorder);
             Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 1).Style.Border.TopBorder);
-            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 4).Style.Border.LeftBorder);
-            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 7).Style.Border.RightBorder);
+            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 3).Style.Border.LeftBorder);
+            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 6).Style.Border.RightBorder);
             Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(4, 21).Style.Border.RightBorder);
 
             var dataRow = 6;
-            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(dataRow, 4).Style.Border.LeftBorder);
-            if (kits.Cell(dataRow, 3).DataType == XLDataType.Number)
-                Assert.Equal("0,00", kits.Cell(dataRow, 3).Style.NumberFormat.Format);
+            Assert.Equal(XLBorderStyleValues.Thick, kits.Cell(dataRow, 3).Style.Border.LeftBorder);
+            if (kits.Cell(dataRow, 20).DataType == XLDataType.Number)
+                Assert.Equal("0,00", kits.Cell(dataRow, 20).Style.NumberFormat.Format);
 
             var findings = book.Worksheet("Замечания");
             Assert.Equal("Элемент", findings.Cell(4, 2).GetString());
             Assert.Equal(XLBorderStyleValues.Thick, findings.Cell(4, 1).Style.Border.TopBorder);
 
-            var cipherStatus = kits.Cell(dataRow, 7);
+            var cipherStatus = kits.Cell(dataRow, 6);
             Assert.Equal("ОК", cipherStatus.GetString());
             Assert.Equal(SeverityPalette.Ok, Html(cipherStatus.Style.Fill.BackgroundColor));
             var overall = kits.Cell(dataRow, 21);
@@ -261,7 +263,7 @@ public class RobustnessTests
                 })
                 .ToList();
             Assert.Contains(xml, text =>
-                text.Contains("xSplit=\"2\"", StringComparison.Ordinal)
+                text.Contains("xSplit=\"3\"", StringComparison.Ordinal)
                 && text.Contains("ySplit=\"5\"", StringComparison.Ordinal)
                 && text.Contains("state=\"frozenSplit\"", StringComparison.Ordinal));
             using var styles = zip.GetEntry("xl/styles.xml")!.Open();
@@ -350,10 +352,10 @@ public class RobustnessTests
             }
 
             var parsed = VerdParser.Parse(verd);
-            Assert.Contains(parsed.Notices, notice => notice.Message.Contains("строка-итог"));
-            Assert.Contains(parsed.Notices, notice => notice.Message.Contains("примечание или текст"));
-            Assert.Contains(parsed.Notices, notice => notice.Message.Contains("пустая строка"));
-            Assert.Contains(parsed.Notices, notice => notice.Message.Contains("нечисловое значение"));
+            Assert.Contains(parsed.RowIssues, notice => notice.Reason.Contains("строка-итог"));
+            Assert.Contains(parsed.RowIssues, notice => notice.Reason.Contains("примечание или текст"));
+            Assert.Contains(parsed.RowIssues, notice => notice.Reason.Contains("пустая строка"));
+            Assert.Contains(parsed.RowIssues, notice => notice.Reason.Contains("нечисловое значение"));
 
             var vesr = Path.Combine(dir.FullName, "vesr.xlsx");
             using (var book = new XLWorkbook())
@@ -371,8 +373,8 @@ public class RobustnessTests
             }
 
             var costs = VesrParser.Parse(vesr);
-            Assert.Contains(costs.Notices, notice => notice.Message.Contains("строка-итог"));
-            Assert.Contains(costs.Notices, notice => notice.Message.Contains("нечисловое значение"));
+            Assert.Contains(costs.RowIssues, notice => notice.Reason.Contains("строка-итог"));
+            Assert.Contains(costs.RowIssues, notice => notice.Reason.Contains("нечисловое значение"));
             Assert.True(costs.ByCode.ContainsKey(TextMatch.CodeKey("4.10.1.1.1")));
         }
         finally
@@ -410,26 +412,29 @@ public class RobustnessTests
             }
 
             var parsed = VesrParser.Parse(vesr);
-            var text = parsed.Notices.Single(notice => notice.Place == "F2");
-            Assert.Contains("Ячейка не разобрана как сумма", text.Message);
-            Assert.Contains("«нечисло»", text.Message);
-            Assert.Contains("текст", text.Message);
+            var text = parsed.ByCode[TextMatch.CodeKey("4.10.1.1.1")].SumProblem;
+            Assert.Contains("Ячейка не разобрана как сумма", text);
+            Assert.Contains("«нечисло»", text);
+            Assert.Contains("текст", text);
 
-            var error = parsed.Notices.Single(notice => notice.Place == "F3");
-            Assert.Contains("«#ЗНАЧ!»", error.Message);
-            Assert.Contains("ошибка Excel", error.Message);
+            var error = parsed.ByCode[TextMatch.CodeKey("4.10.1.1.2")].SumProblem;
+            Assert.Contains("«#ЗНАЧ!»", error);
+            Assert.Contains("ошибка Excel", error);
 
-            var blank = parsed.Notices.Single(notice => notice.Place == "F4");
-            Assert.Contains("Пропущена", blank.Message);
-            Assert.DoesNotContain("не разобрана", blank.Message);
+            var blank = parsed.ByCode[TextMatch.CodeKey("4.10.1.1.3")].SumProblem;
+            Assert.Contains("Пропущена", blank);
+            Assert.DoesNotContain("не разобрана", blank);
 
-            var uncoded = parsed.Notices.Single(notice => notice.Message.Contains("F5"));
-            Assert.Contains("без кода элемента", uncoded.Message);
-            Assert.Contains("«#ДЕЛ/0!»", uncoded.Message);
-            Assert.Contains("пропущена", uncoded.Message);
-            Assert.DoesNotContain("не разобрана", uncoded.Message);
+            var uncoded = parsed.RowIssues.Single(notice => notice.Reason.Contains("F5"));
+            Assert.Contains("без кода элемента", uncoded.Reason);
+            Assert.Contains("«#ДЕЛ/0!»", uncoded.Reason);
+            Assert.Contains("пропущена", uncoded.Reason);
+            Assert.DoesNotContain("не разобрана", uncoded.Reason);
 
-            Assert.DoesNotContain(parsed.Notices, notice => notice.Place == "F6" && notice.Message.Contains("не разобрана"));
+            var empty = parsed.ByCode[TextMatch.CodeKey("4.10.1.1.4")].SumProblem;
+            Assert.Contains("пустая", empty);
+            Assert.DoesNotContain("не разобрана", empty);
+            Assert.Empty(parsed.Notices);
         }
         finally
         {

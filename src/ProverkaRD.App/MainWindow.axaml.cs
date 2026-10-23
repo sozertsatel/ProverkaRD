@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml;
@@ -35,6 +36,11 @@ public partial class MainWindow : Window
             versionText.Text = AppInfo.Version;
         _rdList = this.FindControl<ListBox>("RdList") ?? throw new InvalidOperationException("Не найден список комплектов.");
         _actList = this.FindControl<ListBox>("ActList") ?? throw new InvalidOperationException("Не найден список актов.");
+        _model.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName is nameof(WorkspaceModel.HasSelectedAct))
+                SyncActSplit();
+        };
         RestoreLedgers();
         Opened += (_, _) =>
         {
@@ -114,6 +120,81 @@ public partial class MainWindow : Window
 
     private void OnToggleLists(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
         _model.ListsOpen = !_model.ListsOpen;
+
+    private void OnFilterColumn(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.Tag is not string key)
+            return;
+        e.Handled = true;
+        var values = _model.DistinctColumnValues(key);
+        var active = _model.ColumnFilter(key);
+        var boxes = new List<(string Value, CheckBox Box)>();
+        var list = new StackPanel { Spacing = 2 };
+        foreach (var value in values)
+        {
+            var box = new CheckBox
+            {
+                Content = value.Length == 0 ? "(пусто)" : value,
+                IsChecked = active is null || active.Contains(value),
+            };
+            boxes.Add((value, box));
+            list.Children.Add(box);
+        }
+
+        if (values.Count == 0)
+            list.Children.Add(new TextBlock { Text = "Нет значений", Foreground = Brushes.Gray });
+
+        var root = new StackPanel { Spacing = 8, Margin = new Thickness(10), MinWidth = 200 };
+        root.Children.Add(new ScrollViewer { MaxHeight = 280, Content = list });
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var all = new Button { Content = "Все" };
+        var apply = new Button { Content = "Применить" };
+        var reset = new Button { Content = "Сбросить" };
+        Flyout? flyout = null;
+        all.Click += (_, _) =>
+        {
+            foreach (var (_, box) in boxes)
+                box.IsChecked = true;
+        };
+        reset.Click += (_, _) =>
+        {
+            _model.ClearColumnFilter(key);
+            flyout?.Hide();
+        };
+        apply.Click += (_, _) =>
+        {
+            var picked = boxes.Where(item => item.Box.IsChecked == true).Select(item => item.Value).ToList();
+            _model.SetColumnFilter(key, picked, values.Count);
+            flyout?.Hide();
+        };
+        buttons.Children.Add(all);
+        buttons.Children.Add(apply);
+        buttons.Children.Add(reset);
+        root.Children.Add(buttons);
+        flyout = new Flyout { Content = root, Placement = PlacementMode.Bottom };
+        flyout.ShowAt(button);
+    }
+
+    private void SyncActSplit()
+    {
+        var grid = this.FindControl<Grid>("ActSplit");
+        if (grid is null || grid.RowDefinitions.Count < 3)
+            return;
+        if (!_model.HasSelectedAct)
+        {
+            grid.RowDefinitions[1].Height = new GridLength(0);
+            grid.RowDefinitions[2].Height = new GridLength(0);
+            return;
+        }
+
+        var bottom = grid.RowDefinitions[2].Height;
+        var collapsed = bottom.GridUnitType != GridUnitType.Star && bottom.Value < 40;
+        if (collapsed)
+        {
+            grid.RowDefinitions[1].Height = new GridLength(8);
+            grid.RowDefinitions[2].Height = new GridLength(220);
+        }
+    }
 
     private async void OnCheck(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
@@ -313,6 +394,9 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     private bool _showProgress;
     private CheckReport? _report;
     private ActResult? _selectedAct;
+    private bool _showPairing;
+    private int _pairingGeneration;
+    private readonly Dictionary<string, HashSet<string>> _columnFilters = new(StringComparer.Ordinal);
 
     public ObservableCollection<InputFile> RdFiles { get; } = [];
     public ObservableCollection<InputFile> ActFiles { get; } = [];
@@ -329,13 +413,18 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         {
             Raise(nameof(RdEmpty));
             Raise(nameof(ListsCaption));
+            SchedulePairing();
         };
         ActFiles.CollectionChanged += (_, _) =>
         {
             Raise(nameof(ActEmpty));
             Raise(nameof(ListsCaption));
+            SchedulePairing();
         };
     }
+
+    public ObservableCollection<PairingLine> PairingLines { get; } = [];
+    public bool ShowPairing => _showPairing;
 
     public string? VerdPath
     {
@@ -428,8 +517,28 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
             Raise();
             Raise(nameof(HasSelectedAct));
             Raise(nameof(SelectedActTitle));
+            Raise(nameof(SelectedKitsText));
             Raise(nameof(SelectedRemarksEmpty));
             FillRemarks();
+        }
+    }
+
+    public string SelectedKitsText
+    {
+        get
+        {
+            if (_selectedAct is null || _report is null)
+                return "";
+            var kits = _report.Kits.Where(kit => ActScore.Concerns(_selectedAct, kit)).ToList();
+            if (kits.Count == 0)
+                return "Комплектов по этому акту нет.";
+            var lines = kits.Select(kit =>
+            {
+                var cipher = string.IsNullOrWhiteSpace(kit.Cipher) ? "без шифра" : kit.Cipher;
+                var file = string.IsNullOrWhiteSpace(kit.RdFileName) ? kit.Presence : kit.RdFileName;
+                return string.IsNullOrWhiteSpace(file) ? cipher : cipher + " · " + file;
+            });
+            return "Комплекты (" + kits.Count + "): " + string.Join("; ", lines);
         }
     }
 
@@ -576,6 +685,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
             SetState("finished", "Проверка завершена", "");
         StatusText = _stateTitle;
         ListsOpen = false;
+        _columnFilters.Clear();
         SelectedAct = null;
         Raise(nameof(CanExport));
         Refilter();
@@ -621,16 +731,19 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         var needle = _filter.Trim();
         foreach (var act in _report.Acts
                      .Where(a => Hits(needle, a.FileName, a.ElementNo, a.ActCode, a.CompletenessText, a.ActElementName))
+                     .Where(a => PassesColumn("act-overall", SeverityText.ToRu(a.Overall)) && PassesColumn("act-element", a.ElementNo))
                      .OrderBy(a => Rank(a.Overall))
                      .ThenBy(a => a.ElementNo, Comparer<string>.Create(ElementOrder.Compare)))
             FilteredActs.Add(act);
         foreach (var kit in _report.Kits
                      .Where(k => Hits(needle, k.Cipher, k.ActName, k.ElementNo, k.Surnames, k.Signers, k.ActKitName, k.RdElementName))
+                     .Where(k => PassesColumn("kit-overall", SeverityText.ToRu(k.Overall)) && PassesColumn("kit-element", k.ElementNo))
                      .OrderBy(k => Rank(k.Overall))
                      .ThenBy(k => k.ElementNo, Comparer<string>.Create(ElementOrder.Compare)))
             FilteredKits.Add(kit);
         foreach (var finding in _report.Findings
                      .Where(f => Hits(needle, f.Act, f.Kit, f.ElementNo, f.CheckName, f.ValueA, f.ValueB, f.InAct, f.InRd, f.InVerd, f.InVesr, f.Places, f.ErrorWhere))
+                     .Where(f => PassesColumn("finding-element", f.ElementNo) && PassesColumn("finding-where", f.ErrorWhere))
                      .OrderBy(f => Rank(f.Severity))
                      .ThenBy(f => f.ElementNo, Comparer<string>.Create(ElementOrder.Compare)))
             FilteredFindings.Add(finding);
@@ -704,7 +817,127 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         target.Add(new InputFile { Path = path, Caption = caption });
     }
 
+    public IReadOnlyList<string> DistinctColumnValues(string key)
+    {
+        if (_report is null)
+            return [];
+        IEnumerable<string?> values = key switch
+        {
+            "act-overall" => _report.Acts.Select(act => SeverityText.ToRu(act.Overall)),
+            "act-element" => _report.Acts.Select(act => act.ElementNo),
+            "kit-overall" => _report.Kits.Select(kit => SeverityText.ToRu(kit.Overall)),
+            "kit-element" => _report.Kits.Select(kit => kit.ElementNo),
+            "finding-element" => _report.Findings.Select(finding => finding.ElementNo),
+            "finding-where" => _report.Findings.Select(finding => finding.ErrorWhere),
+            _ => [],
+        };
+        return values
+            .Select(value => value?.Trim() ?? "")
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(value => value, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+    }
+
+    public IReadOnlySet<string>? ColumnFilter(string key) =>
+        _columnFilters.TryGetValue(key, out var selected) ? selected : null;
+
+    public void SetColumnFilter(string key, IReadOnlyCollection<string> selected, int totalDistinct)
+    {
+        if (totalDistinct == 0 || selected.Count >= totalDistinct)
+            _columnFilters.Remove(key);
+        else
+            _columnFilters[key] = new HashSet<string>(selected, StringComparer.CurrentCultureIgnoreCase);
+        Refilter();
+    }
+
+    public void ClearColumnFilter(string key)
+    {
+        if (_columnFilters.Remove(key))
+            Refilter();
+    }
+
+    private bool PassesColumn(string key, string? value)
+    {
+        if (!_columnFilters.TryGetValue(key, out var selected))
+            return true;
+        return selected.Contains(value?.Trim() ?? "");
+    }
+
+    private void SchedulePairing()
+    {
+        var generation = Interlocked.Increment(ref _pairingGeneration);
+        var actPaths = ActFiles.Select(file => file.Path).ToList();
+        var rdPaths = RdFiles.Select(file => file.Path).ToList();
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(250);
+            if (generation != Volatile.Read(ref _pairingGeneration))
+                return;
+            ActSetPreview.Result? preview = null;
+            if (actPaths.Count > 0 || rdPaths.Count > 0)
+            {
+                try
+                {
+                    preview = BuildPairing(actPaths, rdPaths);
+                }
+                catch (Exception ex)
+                {
+                    RunLog.Error("Акт ↔ комплекты", ex);
+                }
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (generation != Volatile.Read(ref _pairingGeneration))
+                    return;
+                ApplyPairing(preview);
+            });
+        });
+    }
+
+    private static ActSetPreview.Result BuildPairing(List<string> actPaths, List<string> rdPaths)
+    {
+        var acts = new List<ActDocument>(actPaths.Count);
+        foreach (var path in actPaths)
+        {
+            try
+            {
+                acts.Add(ActParser.Parse(path));
+            }
+            catch (Exception)
+            {
+                acts.Add(new ActDocument { FilePath = path });
+            }
+        }
+
+        return ActSetPreview.Build(acts, rdPaths);
+    }
+
+    private void ApplyPairing(ActSetPreview.Result? preview)
+    {
+        PairingLines.Clear();
+        if (preview is not null)
+        {
+            foreach (var line in preview.Lines)
+                PairingLines.Add(new PairingLine { Text = line.Text, Missing = line.Missing });
+            foreach (var extra in preview.Unmatched)
+                PairingLines.Add(new PairingLine { Text = extra, Missing = true });
+        }
+
+        var show = PairingLines.Count > 0;
+        if (show == _showPairing)
+            return;
+        _showPairing = show;
+        Raise(nameof(ShowPairing));
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
     private void Raise([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+public sealed class PairingLine
+{
+    public required string Text { get; init; }
+    public bool Missing { get; init; }
 }

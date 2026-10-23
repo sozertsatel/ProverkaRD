@@ -120,23 +120,29 @@ public sealed class VerdBook
     public List<VerdElement> Elements { get; } = [];
     public List<string> Errors { get; } = [];
     public List<Notice> Notices { get; } = [];
+    public List<LedgerRowIssue> RowIssues { get; } = [];
 }
 
 public sealed class VesrRow
 {
+    public int ExcelRow { get; init; }
     public string Code { get; init; } = "";
     public string Name { get; init; } = "";
     public string Unit { get; init; } = "";
     public decimal? Quantity { get; init; }
     public decimal? UnitPrice { get; init; }
     public decimal? TotalNet { get; init; }
+    /// <summary>Пустая или нечисловая сумма «Всего». Для строки акта это замечание, не пропуск.</summary>
+    public string SumProblem { get; init; } = "";
 }
 
 public sealed class VesrBook
 {
     public Dictionary<string, VesrRow> ByCode { get; } = new(StringComparer.Ordinal);
+    public List<VesrRow> Rows { get; } = [];
     public List<string> Errors { get; } = [];
     public List<Notice> Notices { get; } = [];
+    public List<LedgerRowIssue> RowIssues { get; } = [];
 }
 
 public sealed class RdDocument
@@ -273,6 +279,15 @@ public sealed class KitResult
 
 public sealed record Notice(string Source, string Place, string Message);
 
+/// <summary>Строка ведомости, которую не удалось разобрать. В отчёт попадают только строки элементов акта.</summary>
+public sealed class LedgerRowIssue
+{
+    public string Source { get; init; } = "";
+    public int Row { get; init; }
+    public string Owner { get; init; } = "";
+    public string Reason { get; init; } = "";
+}
+
 /// <summary>Одна строка листа «Реестр комплекта»: один PDF.</summary>
 public sealed class RegistryRow
 {
@@ -285,6 +300,9 @@ public sealed class RegistryRow
     public Severity CertStatus { get; init; }
     public Severity SignatureStatus { get; init; }
     public Severity Overall { get; init; }
+    public string Name { get; init; } = "";
+    public string SignatureName { get; init; } = "нет";
+    public bool HasSignature { get; init; }
 }
 
 public readonly record struct CheckProgress(int Done, int Total, string FileName);

@@ -40,7 +40,7 @@ public static partial class VerdParser
 
                 if (IndexRow().IsMatch(number) && IndexRow().IsMatch(name))
                 {
-                    book.Notices.Add(new Notice("ВЭРД", "строка " + r, "Пропущена строка-номер " + number + "."));
+                    Issue(book, r, current?.Number ?? "", "Пропущена строка-номер " + number + ".");
                     continue;
                 }
 
@@ -71,7 +71,7 @@ public static partial class VerdParser
                 }
 
                 if (!startedElement && HasText(number, name, cipher, kitName, dgp, pd))
-                    book.Notices.Add(new Notice("ВЭРД", "строка " + r, RowSkip.Reason(number, name, cipher, kitName, dgp, pd)));
+                    Issue(book, r, current?.Number ?? "", RowSkip.Reason(number, name, cipher, kitName, dgp, pd));
             }
         }
         catch (Exception ex)
@@ -153,6 +153,9 @@ public static partial class VerdParser
     private static bool HasText(params string[] values) =>
         values.Any(value => !string.IsNullOrWhiteSpace(value));
 
+    private static void Issue(VerdBook book, int row, string owner, string reason) =>
+        book.RowIssues.Add(new LedgerRowIssue { Source = "ВЭРД", Row = row, Owner = owner, Reason = reason });
+
     private readonly record struct Columns(int Number, int Name, int Pd, int Cipher, int KitName, int Dgp);
 
     [GeneratedRegex(@"^\d+\.\d+$")]
@@ -192,6 +195,7 @@ public static partial class VesrParser
 
             var (row, cols) = header.Value;
             var last = sheet.LastRowUsed()?.RowNumber() ?? row;
+            var section = "";
             for (var r = row + 1; r <= last; r++)
             {
                 var code = Text(sheet, r, cols.Code);
@@ -205,47 +209,52 @@ public static partial class VesrParser
                     continue;
                 if (code.Length == 0 && name.Length == 0)
                 {
-                    book.Notices.Add(new Notice("ВЭСР", "строка " + r,
-                        DescribeSkipped(sheet, r, cols, code, name, unitText, qtyText, priceText, totalText, withoutCode: true)));
+                    Issue(book, r, section,
+                        DescribeSkipped(sheet, r, cols, code, name, unitText, qtyText, priceText, totalText, withoutCode: true));
                     continue;
                 }
                 if (code.Contains("элемент", StringComparison.OrdinalIgnoreCase))
                 {
-                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Повтор шапки пропущен."));
+                    Issue(book, r, section, "Повтор шапки пропущен.");
                     continue;
                 }
                 if (IndexRow().IsMatch(code) && IndexRow().IsMatch(name))
                 {
-                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Пропущена строка-номер " + code + "."));
+                    Issue(book, r, section, "Пропущена строка-номер " + code + ".");
                     continue;
                 }
                 if (!StartsWithDigit().IsMatch(code))
                 {
-                    book.Notices.Add(new Notice("ВЭСР", "строка " + r,
-                        DescribeSkipped(sheet, r, cols, code, name, unitText, qtyText, priceText, totalText, withoutCode: false)));
+                    Issue(book, r, section,
+                        DescribeSkipped(sheet, r, cols, code, name, unitText, qtyText, priceText, totalText, withoutCode: false));
                     continue;
                 }
 
+                var total = ReadMoneyCell(sheet, r, cols.Total);
                 var rowData = new VesrRow
                 {
+                    ExcelRow = r,
                     Code = code.Trim(),
                     Name = name,
                     Unit = Text(sheet, r, cols.Unit),
                     Quantity = cols.Qty > 0 ? MoneyDecimal.ReadQuantity(sheet.Cell(r, cols.Qty)) : null,
-                    UnitPrice = ReadMoneyCell(book, sheet, r, cols.Price),
-                    TotalNet = ReadMoneyCell(book, sheet, r, cols.Total),
+                    UnitPrice = ReadMoneyCell(sheet, r, cols.Price).Value,
+                    TotalNet = total.Value,
+                    SumProblem = total.Problem,
                 };
                 var key = TextMatch.CodeKey(rowData.Code);
                 if (key.Length == 0)
                 {
-                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Код элемента пустой после нормализации."));
+                    Issue(book, r, section, "Код элемента пустой после нормализации.");
                     continue;
                 }
+                section = rowData.Code;
                 if (book.ByCode.ContainsKey(key))
                 {
-                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Повтор кода " + code.Trim() + " пропущен, оставлена первая строка."));
+                    Issue(book, r, rowData.Code, "Повтор кода " + code.Trim() + " пропущен, оставлена первая строка.");
                     continue;
                 }
+                book.Rows.Add(rowData);
                 book.ByCode[key] = rowData;
             }
         }
@@ -274,6 +283,7 @@ public static partial class VesrParser
             var unitCol = 3;
             var qtyCol = 4;
             var priceCol = 5;
+            var nameCol = 2;
             for (var look = r; look <= Math.Min(r + 2, last); look++)
             {
                 for (var c = 1; c <= maxCol; c++)
@@ -287,10 +297,13 @@ public static partial class VesrParser
                         qtyCol = c;
                     else if (text.Contains("единицу", StringComparison.OrdinalIgnoreCase))
                         priceCol = c;
+                    else if (text.Contains("конструктив", StringComparison.OrdinalIgnoreCase)
+                             || (nameCol == 2 && text.Contains("Наименование", StringComparison.OrdinalIgnoreCase)))
+                        nameCol = c;
                 }
             }
 
-            return (r, new Columns(1, 2, unitCol, qtyCol, priceCol, totalCol));
+            return (r, new Columns(1, nameCol, unitCol, qtyCol, priceCol, totalCol));
         }
         return null;
     }
@@ -333,41 +346,37 @@ public static partial class VesrParser
         return MoneyCellNote.DescribeUnparsed(sheet.Cell(row, col));
     }
 
-    private static decimal? ReadMoneyCell(VesrBook book, IXLWorksheet sheet, int row, int col)
+    private readonly record struct MoneyRead(decimal? Value, string Problem);
+
+    private static MoneyRead ReadMoneyCell(IXLWorksheet sheet, int row, int col)
     {
         if (col <= 0)
-            return null;
+            return new MoneyRead(null, "");
         var cell = sheet.Cell(row, col);
-        if (cell.IsEmpty())
-            return null;
         var place = cell.Address.ToString() ?? "";
+        if (cell.IsEmpty())
+            return new MoneyRead(null, "Ячейка " + place + " пустая.");
         try
         {
             if (MoneyCellNote.IsError(cell))
-            {
-                book.Notices.Add(new Notice("ВЭСР", place, MoneyCellNote.Failure(cell)));
-                return null;
-            }
-
+                return new MoneyRead(null, MoneyCellNote.Failure(cell));
             if (MoneyCellNote.IsBlankValue(cell))
-            {
-                book.Notices.Add(new Notice("ВЭСР", place, "Пропущена пустая ячейка."));
-                return null;
-            }
-
+                return new MoneyRead(null, "Пропущена пустая ячейка.");
             var money = MoneyDecimal.ReadMoney(cell);
             if (money is null)
-                book.Notices.Add(new Notice("ВЭСР", place, MoneyCellNote.Failure(cell)));
-            return money;
+                return new MoneyRead(null, MoneyCellNote.Failure(cell));
+            return new MoneyRead(money, "");
         }
         catch (Exception ex)
         {
             var shown = MoneyCellNote.Shown(cell);
             var tail = shown.Length == 0 ? ex.Message : "«" + shown + "», " + ex.Message;
-            book.Notices.Add(new Notice("ВЭСР", place, "Ячейка не разобрана как сумма: " + tail));
-            return null;
+            return new MoneyRead(null, "Ячейка не разобрана как сумма: " + tail);
         }
     }
+
+    private static void Issue(VesrBook book, int row, string owner, string reason) =>
+        book.RowIssues.Add(new LedgerRowIssue { Source = "ВЭСР", Row = row, Owner = owner, Reason = reason });
 
     private readonly record struct Columns(int Code, int Name, int Unit, int Qty, int Price, int Total);
 

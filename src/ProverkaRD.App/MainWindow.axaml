@@ -9,6 +9,7 @@
         MinWidth="980" MinHeight="680"
         Background="#F3F5F8">
     <Window.Resources>
+        <local:MissingBrushConverter x:Key="MissingBrush"/>
         <local:SeverityTextConverter x:Key="SevText"/>
         <local:SeverityBrushConverter x:Key="SevBrush"/>
         <local:FailBrushConverter x:Key="FailBrush"/>
@@ -25,6 +26,7 @@
         <DataTemplate x:Key="SurnamesCell"><local:WrappedCell Text="{Binding Surnames}"/></DataTemplate>
         <DataTemplate x:Key="SignersCell"><local:WrappedCell Text="{Binding Signers}"/></DataTemplate>
         <DataTemplate x:Key="NoticeCell"><local:WrappedCell Text="{Binding Message}"/></DataTemplate>
+        <DataTemplate x:Key="ExplanationCell"><local:WrappedCell Text="{Binding Explanation}"/></DataTemplate>
     </Window.Resources>
 
     <Window.Styles>
@@ -51,7 +53,7 @@
                         <Image Width="44" Height="44" Source="avares://ProverkaRD/Assets/rd.png"/>
                     </Border>
                     <TextBlock x:Name="ProductTitle" Text="РД Контроль" FontSize="28" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="VersionText" Text="0.1.4" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="VersionText" Text="0.1.5" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Center"/>
                 </StackPanel>
                 <Button Grid.Column="1" Classes="onDark" Click="OnSettings" VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal" Spacing="8">
@@ -102,7 +104,7 @@
             <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap"/>
         </Border>
 
-        <Grid Margin="16" RowDefinitions="Auto,*">
+        <Grid Margin="16" RowDefinitions="Auto,Auto,*">
             <Border Background="White" CornerRadius="10" BorderBrush="#E2E7EE" BorderThickness="1" VerticalAlignment="Top">
                 <StackPanel>
                     <Grid ColumnDefinitions="*,*" MinHeight="36" ToolTip.Tip="Показать или скрыть списки файлов">
@@ -171,7 +173,22 @@
                 </StackPanel>
             </Border>
 
-            <Grid Grid.Row="1" Margin="0,12,0,0" RowDefinitions="Auto,*">
+            <Border Grid.Row="1" Margin="0,8,0,0" Padding="12,8" Background="White" CornerRadius="10"
+                    BorderBrush="#E2E7EE" BorderThickness="1" IsVisible="{Binding ShowPairing}">
+                <StackPanel Spacing="2">
+                    <TextBlock Text="Акт ↔ комплекты" FontWeight="SemiBold" Foreground="#1F4E79"/>
+                    <ItemsControl ItemsSource="{Binding PairingLines}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap"
+                                           Foreground="{Binding Missing, Converter={StaticResource MissingBrush}}"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <Grid Grid.Row="2" Margin="0,12,0,0" RowDefinitions="Auto,*">
                 <Grid ColumnDefinitions="*,Auto">
                     <TextBox PlaceholderText="Фильтр по акту, шифру или тексту" Text="{Binding FilterText}" Width="320" HorizontalAlignment="Left"/>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
@@ -181,8 +198,8 @@
                 </Grid>
                 <TabControl Grid.Row="1" Margin="0,8,0,0">
                     <TabItem Header="Акты">
-                        <Grid RowDefinitions="*,Auto">
-                            <DataGrid ItemsSource="{Binding FilteredActs}" SelectedItem="{Binding SelectedAct, Mode=TwoWay}"
+                        <Grid x:Name="ActSplit" RowDefinitions="*,0,0">
+                            <DataGrid Grid.Row="0" ItemsSource="{Binding FilteredActs}" SelectedItem="{Binding SelectedAct, Mode=TwoWay}"
                                       IsReadOnly="True" CanUserSortColumns="True"
                                       GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
                                       AutoGenerateColumns="False">
@@ -194,7 +211,13 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTemplateColumn Header="Итог" Width="150">
+                                    <DataGridTemplateColumn Width="150" SortMemberPath="Overall">
+                                        <DataGridTemplateColumn.Header>
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <TextBlock Text="Итог" VerticalAlignment="Center"/>
+                                                <Button Content="▾" Padding="4,0" Tag="act-overall" Click="OnFilterColumn" Background="Transparent"/>
+                                            </StackPanel>
+                                        </DataGridTemplateColumn.Header>
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Border Background="{Binding Overall, Converter={StaticResource SevBrush}}" CornerRadius="4" Padding="8,2" HorizontalAlignment="Left">
@@ -203,7 +226,14 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="90"/>
+                                    <DataGridTextColumn Binding="{Binding ElementNo}" Width="110" SortMemberPath="ElementNo">
+                                        <DataGridTextColumn.Header>
+                                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                                <TextBlock Text="Элемент" VerticalAlignment="Center"/>
+                                                <Button Content="▾" Padding="4,0" Tag="act-element" Click="OnFilterColumn" Background="Transparent"/>
+                                            </StackPanel>
+                                        </DataGridTextColumn.Header>
+                                    </DataGridTextColumn>
                                     <DataGridTextColumn Header="Критично" Binding="{Binding CriticalCount}" Width="90"/>
                                     <DataGridTextColumn Header="Оформление" Binding="{Binding FormattingCount}" Width="110"/>
                                     <DataGridTextColumn Header="Предупреждения" Binding="{Binding WarningCount}" Width="140"/>
@@ -285,14 +315,17 @@
                                     <DataGridTemplateColumn Header="Состав" Width="280" MinWidth="140" SortMemberPath="CompletenessText" CellTemplate="{StaticResource CompletenessCell}"/>
                                 </DataGrid.Columns>
                             </DataGrid>
-                            <Border Grid.Row="1" IsVisible="{Binding HasSelectedAct}" Margin="0,8,0,0" Padding="10" Background="White"
-                                    BorderBrush="#E2E7EE" BorderThickness="1" CornerRadius="8" MaxHeight="220">
+                            <GridSplitter Grid.Row="1" Height="8" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                          ResizeDirection="Rows" Background="#D5DDE8" IsVisible="{Binding HasSelectedAct}"/>
+                            <Border Grid.Row="2" IsVisible="{Binding HasSelectedAct}" Padding="10" Background="White"
+                                    BorderBrush="#E2E7EE" BorderThickness="1" CornerRadius="8">
                                 <DockPanel>
                                     <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedActTitle}" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                                    <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedKitsText}" TextWrapping="Wrap" Margin="0,0,0,6"/>
                                     <TextBlock DockPanel.Dock="Top" IsVisible="{Binding SelectedRemarksEmpty}" Foreground="#5C6B7A"
                                                Text="Замечаний по этому акту нет."/>
                                     <DataGrid ItemsSource="{Binding SelectedRemarks}" IsReadOnly="True" CanUserSortColumns="True"
-                                              GridLinesVisibility="Horizontal" AutoGenerateColumns="False" MaxHeight="160">
+                                              GridLinesVisibility="Horizontal" AutoGenerateColumns="False">
                                         <DataGrid.Columns>
                                             <DataGridTemplateColumn Width="8" CanUserResize="False">
                                                 <DataGridTemplateColumn.CellTemplate>
@@ -311,6 +344,7 @@
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
                                             <DataGridTemplateColumn Header="Что проверялось" Width="*" MinWidth="140" SortMemberPath="CheckName" CellTemplate="{StaticResource CheckNameCell}"/>
+                                            <DataGridTemplateColumn Header="Пояснение" Width="*" MinWidth="160" SortMemberPath="Explanation" CellTemplate="{StaticResource ExplanationCell}"/>
                                             <DataGridTemplateColumn Header="В акте" Width="160" MinWidth="96" SortMemberPath="InAct" CellTemplate="{StaticResource InActCell}"/>
                                             <DataGridTemplateColumn Header="В РД" Width="120" MinWidth="80" SortMemberPath="InRd" CellTemplate="{StaticResource InRdCell}"/>
                                             <DataGridTemplateColumn Header="В ВЭРД" Width="160" MinWidth="96" SortMemberPath="InVerd" CellTemplate="{StaticResource InVerdCell}"/>
@@ -333,7 +367,13 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="Итог" Width="150">
+                                <DataGridTemplateColumn Width="150" SortMemberPath="Overall">
+                                    <DataGridTemplateColumn.Header>
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <TextBlock Text="Итог" VerticalAlignment="Center"/>
+                                            <Button Content="▾" Padding="4,0" Tag="kit-overall" Click="OnFilterColumn" Background="Transparent"/>
+                                        </StackPanel>
+                                    </DataGridTemplateColumn.Header>
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Border Background="{Binding Overall, Converter={StaticResource SevBrush}}" CornerRadius="4" Padding="8,2" HorizontalAlignment="Left">
@@ -342,7 +382,14 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="80"/>
+                                <DataGridTextColumn Binding="{Binding ElementNo}" Width="110" SortMemberPath="ElementNo">
+                                    <DataGridTextColumn.Header>
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <TextBlock Text="Элемент" VerticalAlignment="Center"/>
+                                            <Button Content="▾" Padding="4,0" Tag="kit-element" Click="OnFilterColumn" Background="Transparent"/>
+                                        </StackPanel>
+                                    </DataGridTextColumn.Header>
+                                </DataGridTextColumn>
                                 <DataGridTextColumn Header="Шифр" Binding="{Binding Cipher}" Width="240"/>
                                 <DataGridTextColumn Header="Акт" Binding="{Binding ActName}" Width="220"/>
                                 <DataGridTemplateColumn Header="Наименование" Width="140">
@@ -384,7 +431,14 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="80"/>
+                                <DataGridTextColumn Binding="{Binding ElementNo}" Width="110" SortMemberPath="ElementNo">
+                                    <DataGridTextColumn.Header>
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <TextBlock Text="Элемент" VerticalAlignment="Center"/>
+                                            <Button Content="▾" Padding="4,0" Tag="finding-element" Click="OnFilterColumn" Background="Transparent"/>
+                                        </StackPanel>
+                                    </DataGridTextColumn.Header>
+                                </DataGridTextColumn>
                                 <DataGridTemplateColumn Header="Критичность" Width="132">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
@@ -400,7 +454,14 @@
                                 <DataGridTemplateColumn Header="В ВЭРД" Width="150" MinWidth="96" SortMemberPath="InVerd" CellTemplate="{StaticResource InVerdCell}"/>
                                 <DataGridTemplateColumn Header="В ВЭСР" Width="96" MinWidth="72" SortMemberPath="InVesr" CellTemplate="{StaticResource InVesrCell}"/>
                                 <DataGridTemplateColumn Header="Где" Width="*" MinWidth="150" SortMemberPath="Places" CellTemplate="{StaticResource PlacesCell}"/>
-                                <DataGridTemplateColumn Header="Где ошибка" Width="*" MinWidth="160" SortMemberPath="ErrorWhere" CellTemplate="{StaticResource ErrorWhereCell}"/>
+                                <DataGridTemplateColumn Width="*" MinWidth="180" SortMemberPath="ErrorWhere" CellTemplate="{StaticResource ErrorWhereCell}">
+                                    <DataGridTemplateColumn.Header>
+                                        <StackPanel Orientation="Horizontal" Spacing="4">
+                                            <TextBlock Text="Где ошибка" VerticalAlignment="Center"/>
+                                            <Button Content="▾" Padding="4,0" Tag="finding-where" Click="OnFilterColumn" Background="Transparent"/>
+                                        </StackPanel>
+                                    </DataGridTemplateColumn.Header>
+                                </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
                     </TabItem>

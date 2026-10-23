@@ -168,22 +168,24 @@ public static class ReportWriter
 
         const int groupRow = 4;
         const int headerRow = 5;
-        Group(sheet, groupRow, 1, 3, "Акт", "#334155");
-        Group(sheet, groupRow, 4, 7, "1. Шифр", "#1F4E79");
-        Group(sheet, groupRow, 8, 11, "2. Наименование комплекта", "#215C3A");
-        Group(sheet, groupRow, 12, 15, "3. Наименование элемента", "#6B3F1D");
-        Group(sheet, groupRow, 16, 17, "4. Файлы", "#5C3B6E");
-        Group(sheet, groupRow, 18, 20, "5. Подписи", "#8C3A3A");
+        Group(sheet, groupRow, 1, 2, "Акт", "#334155");
+        Group(sheet, groupRow, 3, 6, "1. Шифр", "#1F4E79");
+        Group(sheet, groupRow, 7, 10, "2. Наименование комплекта", "#215C3A");
+        Group(sheet, groupRow, 11, 14, "3. Наименование элемента", "#6B3F1D");
+        Group(sheet, groupRow, 15, 16, "4. Файлы", "#5C3B6E");
+        Group(sheet, groupRow, 17, 19, "5. Подписи", "#8C3A3A");
+        Group(sheet, groupRow, 20, 20, "Аванс", "#334155");
         Group(sheet, groupRow, 21, 21, "6. Итог", "#1F4E79");
 
         var headers = new[]
         {
-            "Элемент", "Акт", "Погашение аванса без НДС",
+            "Элемент", "Акт",
             "В акте", "В ВЭРД", "На титуле РД", "Статус",
             "В акте", "В ВЭРД", "В РД", "Статус",
             "В акте", "В ВЭРД", "В РД", "Статус",
             "PDF", ".sig",
             "Фамилии из тома", "Нет в ЭЦП", "Статус",
+            "Погашение аванса без НДС",
             "Итог",
         };
         for (var i = 0; i < headers.Length; i++)
@@ -199,7 +201,6 @@ public static class ReportWriter
             var col = 1;
             sheet.Cell(row, col++).Value = kit.ElementNo;
             sheet.Cell(row, col++).Value = kit.ActNo.Length > 0 ? kit.ActNo : "—";
-            WriteAdvance(sheet.Cell(row, col++), kit.AdvanceNet);
             sheet.Cell(row, col++).Value = kit.ActCipher;
             sheet.Cell(row, col++).Value = kit.VerdCipher;
             sheet.Cell(row, col++).Value = kit.TitleCipher;
@@ -217,34 +218,36 @@ public static class ReportWriter
             sheet.Cell(row, col++).Value = kit.Surnames;
             sheet.Cell(row, col++).Value = kit.MissingSigners;
             Status(sheet.Cell(row, col++), kit.SurnameStatus);
+            WriteAdvance(sheet.Cell(row, col++), kit.AdvanceNet);
             Status(sheet.Cell(row, col), kit.Overall);
             row++;
         }
 
-        sheet.SheetView.Freeze(headerRow, 2);
+        sheet.SheetView.Freeze(headerRow, 3);
         if (report.Kits.Count > 0)
             sheet.Range(headerRow, 1, row - 1, columns).SetAutoFilter();
         Widths(sheet, columns);
-        sheet.Column(3).Width = 22;
-        foreach (var wide in new[] { 6, 8, 9, 10, 12, 13, 14, 18, 19 })
+        sheet.Column(20).Width = 22;
+        foreach (var wide in new[] { 5, 7, 8, 9, 11, 12, 13, 17, 18 })
             sheet.Column(wide).Width = 36;
         if (row > headerRow + 1)
         {
             sheet.Rows(headerRow + 1, row - 1).Style.Alignment.WrapText = true;
             for (var r = headerRow + 1; r < row; r++)
             {
-                var advance = sheet.Cell(r, 3);
+                var advance = sheet.Cell(r, 20);
                 if (advance.DataType == XLDataType.Number)
                     advance.Style.NumberFormat.Format = "0,00";
             }
         }
         var blockEnd = Math.Max(row - 1, headerRow);
-        Outline(sheet, groupRow, 1, blockEnd, 3);
-        Outline(sheet, groupRow, 4, blockEnd, 7);
-        Outline(sheet, groupRow, 8, blockEnd, 11);
-        Outline(sheet, groupRow, 12, blockEnd, 15);
-        Outline(sheet, groupRow, 16, blockEnd, 17);
-        Outline(sheet, groupRow, 18, blockEnd, 20);
+        Outline(sheet, groupRow, 1, blockEnd, 2);
+        Outline(sheet, groupRow, 3, blockEnd, 6);
+        Outline(sheet, groupRow, 7, blockEnd, 10);
+        Outline(sheet, groupRow, 11, blockEnd, 14);
+        Outline(sheet, groupRow, 15, blockEnd, 16);
+        Outline(sheet, groupRow, 17, blockEnd, 19);
+        Outline(sheet, groupRow, 20, blockEnd, 20);
         Outline(sheet, groupRow, 21, blockEnd, 21);
     }
 
@@ -360,13 +363,13 @@ public static class ReportWriter
         UseFont(sheet);
         var headers = new[]
         {
-            "Файл", "Шифр", "Элемент", "Фамилии штампа", "Подписанты .sig", "Сертификат", "Подпись", "Итог",
+            "№ п/п", "Элемент", "Шифр комплекта", "Наименование", "Файл PDF", "Подпись (.sig)", "Подписанты",
         };
-        sheet.Cell(1, 1).Value = Titled("Реестр комплекта", appVersion);
+        sheet.Cell(1, 1).Value = Titled("Опись комплекта", appVersion);
         sheet.Cell(1, 1).Style.Font.Bold = true;
         sheet.Cell(1, 1).Style.Font.FontSize = 16;
         sheet.Range(1, 1, 1, headers.Length).Merge();
-        sheet.Cell(2, 1).Value = "Одна строка — один PDF. Фамилии из граф штампа. Подписанты — ФИО из сертификата .sig. Итог — худший из подписи, срока сертификата и фамилий штампа.";
+        sheet.Cell(2, 1).Value = "Опись PDF. Одна строка — один комплект. Внизу — сколько комплектов и сколько из них с подписью.";
         sheet.Range(2, 1, 2, headers.Length).Merge();
         sheet.Cell(2, 1).Style.Alignment.WrapText = true;
         sheet.Row(2).Height = 32;
@@ -377,34 +380,43 @@ public static class ReportWriter
         StyleHeader(sheet.Range(headerRow, 1, headerRow, headers.Length));
 
         var row = headerRow + 1;
+        var number = 1;
         foreach (var item in report.Registry)
         {
-            sheet.Cell(row, 1).Value = item.FileName;
-            sheet.Cell(row, 2).Value = item.Cipher;
-            sheet.Cell(row, 3).Value = item.Element;
-            sheet.Cell(row, 4).Value = item.Surnames;
-            sheet.Cell(row, 5).Value = item.Signers;
-            sheet.Cell(row, 6).Value = item.CertValidity;
-            Paint(sheet.Cell(row, 6), item.CertStatus);
-            sheet.Cell(row, 6).Style.Font.Bold = item.CertStatus != Severity.Ok;
-            Status(sheet.Cell(row, 7), item.SignatureStatus);
-            Status(sheet.Cell(row, 8), item.Overall);
+            sheet.Cell(row, 1).Value = number++;
+            sheet.Cell(row, 2).Value = item.Element;
+            sheet.Cell(row, 3).Value = item.Cipher;
+            sheet.Cell(row, 4).Value = item.Name;
+            sheet.Cell(row, 5).Value = item.FileName;
+            sheet.Cell(row, 6).Value = item.SignatureName;
+            sheet.Cell(row, 7).Value = item.Signers;
             row++;
         }
 
+        var signed = report.Registry.Count(item => item.HasSignature);
+        sheet.Cell(row, 1).Value = "Итого";
+        sheet.Range(row, 1, row, 4).Merge();
+        sheet.Cell(row, 5).Value = "Комплектов: " + report.Registry.Count;
+        sheet.Cell(row, 6).Value = "Подписано: " + signed;
+        sheet.Range(row, 1, row, headers.Length).Style.Font.Bold = true;
+        var totalRow = row;
+
+        sheet.PageSetup.PageOrientation = XLPageOrientation.Landscape;
+        sheet.PageSetup.PagesWide = 1;
+        sheet.PageSetup.SetRowsToRepeatAtTop(headerRow, headerRow);
         sheet.SheetView.FreezeRows(headerRow);
-        if (report.Registry.Count > 0)
-            sheet.Range(headerRow, 1, row - 1, headers.Length).SetAutoFilter();
+        sheet.PageSetup.FitToPages(1, 0);
         Widths(sheet, headers.Length);
-        sheet.Column(1).Width = 42;
-        sheet.Column(2).Width = 36;
-        sheet.Column(3).Width = 28;
-        sheet.Column(4).Width = 36;
-        sheet.Column(5).Width = 36;
-        sheet.Column(6).Width = 42;
+        sheet.Column(1).Width = 10;
+        sheet.Column(2).Width = 28;
+        sheet.Column(3).Width = 36;
+        sheet.Column(4).Width = 42;
+        sheet.Column(5).Width = 42;
+        sheet.Column(6).Width = 28;
+        sheet.Column(7).Width = 36;
         if (row > headerRow + 1)
-            sheet.Rows(headerRow + 1, row - 1).Style.Alignment.WrapText = true;
-        Outline(sheet, headerRow, 1, Math.Max(row - 1, headerRow), headers.Length);
+            sheet.Rows(headerRow + 1, totalRow).Style.Alignment.WrapText = true;
+        Outline(sheet, headerRow, 1, totalRow, headers.Length);
     }
 
     private static string Titled(string title, string? version)
