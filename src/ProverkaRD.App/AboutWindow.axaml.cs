@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using ProverkaRD.Engine;
 
 namespace ProverkaRD;
 
@@ -12,6 +13,9 @@ public partial class AboutWindow : Window
     public AboutWindow()
     {
         AvaloniaXamlLoader.Load(this);
+        var product = this.FindControl<TextBlock>("ProductTitle");
+        if (product is not null)
+            product.Text = ProductBrand.Name;
         var version = this.FindControl<TextBlock>("VersionText");
         if (version is not null)
             version.Text = "Версия " + AppInfo.Version;

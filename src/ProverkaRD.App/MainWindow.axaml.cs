@@ -27,6 +27,9 @@ public partial class MainWindow : Window
         DataContext = _model;
         AvaloniaXamlLoader.Load(this);
         Title = AppInfo.WindowTitle;
+        var productTitle = this.FindControl<TextBlock>("ProductTitle");
+        if (productTitle is not null)
+            productTitle.Text = ProductBrand.Name;
         var versionText = this.FindControl<TextBlock>("VersionText");
         if (versionText is not null)
             versionText.Text = AppInfo.Version;

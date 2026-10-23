@@ -2,15 +2,19 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="ProverkaRD.AboutWindow"
         Title="О программе"
+        Icon="/Assets/rd.png"
         Width="640" Height="640"
         MinWidth="480" MinHeight="420"
         WindowStartupLocation="CenterOwner"
         Background="White">
     <Grid Margin="20" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto">
-        <StackPanel Spacing="4">
-            <TextBlock Text="Проверка РД" FontSize="22" FontWeight="Bold" Foreground="#1F4E79"/>
-            <TextBlock x:Name="VersionText" FontSize="14" Foreground="#5C6B7A"/>
-            <TextBlock x:Name="DescriptionText" TextWrapping="Wrap" Margin="0,6,0,0"/>
+        <StackPanel Orientation="Horizontal" Spacing="12">
+            <Image Width="56" Height="56" VerticalAlignment="Center" Source="avares://ProverkaRD/Assets/rd.png"/>
+            <StackPanel Spacing="4" VerticalAlignment="Center">
+                <TextBlock x:Name="ProductTitle" Text="РД Контроль" FontSize="22" FontWeight="Bold" Foreground="#1F4E79"/>
+                <TextBlock x:Name="VersionText" FontSize="14" Foreground="#5C6B7A"/>
+                <TextBlock x:Name="DescriptionText" TextWrapping="Wrap" Margin="0,6,0,0"/>
+            </StackPanel>
         </StackPanel>
         <Button Grid.Row="1" HorizontalAlignment="Left" Margin="0,10,0,0" Padding="0" Background="Transparent"
                 Click="OnOpenRepo">

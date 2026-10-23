@@ -3,7 +3,8 @@
         xmlns:local="using:ProverkaRD"
         x:Class="ProverkaRD.MainWindow"
         x:CompileBindings="False"
-        Title="Проверка РД"
+        Title="РД Контроль"
+        Icon="/Assets/rd.png"
         Width="1320" Height="880"
         MinWidth="980" MinHeight="680"
         Background="#F3F5F8">
@@ -45,9 +46,12 @@
     <DockPanel>
         <Border DockPanel.Dock="Top" Background="#1F4E79" Padding="22,16">
             <Grid ColumnDefinitions="*,Auto">
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                    <TextBlock Text="Проверка РД" FontSize="28" FontWeight="Bold" Foreground="White"/>
-                    <TextBlock x:Name="VersionText" Text="0.1.3" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+                <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                    <Border Width="44" Height="44" CornerRadius="22" Background="White" ClipToBounds="True" VerticalAlignment="Center">
+                        <Image Width="44" Height="44" Source="avares://ProverkaRD/Assets/rd.png"/>
+                    </Border>
+                    <TextBlock x:Name="ProductTitle" Text="РД Контроль" FontSize="28" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="VersionText" Text="0.1.4" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Center"/>
                 </StackPanel>
                 <Button Grid.Column="1" Classes="onDark" Click="OnSettings" VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal" Spacing="8">

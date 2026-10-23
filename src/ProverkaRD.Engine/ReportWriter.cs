@@ -19,6 +19,7 @@ public static class ReportWriter
         WriteRegistry(workbook, report, appVersion);
         foreach (var sheet in workbook.Worksheets)
         {
+            StampFooter(sheet, appVersion);
             var used = sheet.RangeUsed();
             if (used is null)
                 continue;
@@ -406,8 +407,18 @@ public static class ReportWriter
         Outline(sheet, headerRow, 1, Math.Max(row - 1, headerRow), headers.Length);
     }
 
-    private static string Titled(string title, string? version) =>
-        string.IsNullOrWhiteSpace(version) ? title : title + ", версия " + version.Trim();
+    private static string Titled(string title, string? version)
+    {
+        var named = ProductBrand.Name + ". " + title;
+        return string.IsNullOrWhiteSpace(version) ? named : named + ", версия " + version.Trim();
+    }
+
+    private static void StampFooter(IXLWorksheet sheet, string? appVersion)
+    {
+        sheet.PageSetup.Footer.Left.AddText(ProductBrand.Name, XLHFOccurrence.AllPages);
+        if (!string.IsNullOrWhiteSpace(appVersion))
+            sheet.PageSetup.Footer.Right.AddText("версия " + appVersion.Trim(), XLHFOccurrence.AllPages);
+    }
 
     private static void Group(IXLWorksheet sheet, int row, int from, int to, string title, string color)
     {

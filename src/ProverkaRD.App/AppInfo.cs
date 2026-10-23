@@ -1,4 +1,5 @@
 using System.Reflection;
+using ProverkaRD.Engine;
 
 namespace ProverkaRD;
 
@@ -13,7 +14,7 @@ public static class AppInfo
 
     public static string Version { get; } = ReadVersion();
 
-    public static string WindowTitle => "Проверка РД " + Version;
+    public static string WindowTitle => ProductBrand.Name + " " + Version;
 
     public static string ReleasesPage =>
         $"https://github.com/{RepoOwner}/{RepoName}/releases/latest";

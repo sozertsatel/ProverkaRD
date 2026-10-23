@@ -105,7 +105,7 @@ static class Headless
 
     private static void PrintHelp()
     {
-        Console.WriteLine("Проверка РД " + AppInfo.Version + " — сверка акта, ВЭРД, ВЭСР и комплектов.");
+        Console.WriteLine(AppInfo.WindowTitle + " — сверка акта, ВЭРД, ВЭСР и комплектов.");
         Console.WriteLine("ProverkaRD --check --verd etap.xlsx --vesr vesr.xlsx --acts папка_актов --rds папка_рд --out отчёт.xlsx");
     }
 
