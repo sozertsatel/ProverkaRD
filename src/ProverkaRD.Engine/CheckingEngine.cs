@@ -254,6 +254,7 @@ public sealed partial class CheckingEngine
         foreach (var row in BuildRegistry(report, rdFiles))
             report.Registry.Add(row);
         report.Load = BuildLoadStats(report, input, acts, rdFiles, usedRd);
+        report.Stage = StageLabel.Pick(input.VerdPath, acts.Select(act => act.Stage), verd?.HeaderText);
         return report;
     }
 

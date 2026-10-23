@@ -17,6 +17,7 @@ public static partial class ActParser
         var costs = new List<ActCostLine>();
         string? headingNo = null;
         decimal? advance = null;
+        var stage = "";
 
         try
         {
@@ -26,6 +27,7 @@ public static partial class ActParser
                 ?? throw new InvalidDataException("В документе нет тела.");
 
             var prose = string.Join("\n", body.Descendants<Paragraph>().Select(ParagraphText));
+            stage = StageLabel.FromText(prose) ?? "";
             advance = AdvancePayment.Parse(prose);
             if (advance is decimal paid)
                 advance = MoneyDecimal.Kopecks(paid);
@@ -84,6 +86,7 @@ public static partial class ActParser
             AdvanceNet = advance,
             Errors = errors,
             Notices = notices,
+            Stage = stage,
         };
     }
 

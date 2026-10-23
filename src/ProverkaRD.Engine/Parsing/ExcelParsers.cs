@@ -20,6 +20,7 @@ public static partial class VerdParser
                     "Лист «База» не найден. Читается лист «" + wb.Worksheets.First().Name + "»."));
             var sheet = named ?? wb.Worksheets.First();
             var header = FindHeader(sheet);
+            book.HeaderText = Preamble(sheet, header?.Row ?? 0);
             if (header is null)
             {
                 book.Errors.Add("В ВЭРД не найдена строка заголовков (ожидались «Номер элемента» и «Шифр РД»).");
@@ -121,6 +122,26 @@ public static partial class VerdParser
             return (r, cols);
         }
         return null;
+    }
+
+    private static string Preamble(IXLWorksheet sheet, int headerRow)
+    {
+        var last = headerRow > 0
+            ? headerRow
+            : Math.Min(sheet.LastRowUsed()?.RowNumber() ?? 1, 8);
+        var maxCol = Math.Min(sheet.LastColumnUsed()?.ColumnNumber() ?? 1, 15);
+        var bits = new List<string>();
+        for (var r = 1; r <= last; r++)
+        {
+            for (var c = 1; c <= maxCol; c++)
+            {
+                var text = Text(sheet, r, c);
+                if (text.Length > 0)
+                    bits.Add(text);
+            }
+        }
+
+        return string.Join("\n", bits);
     }
 
     private static string ElementNumber(IXLWorksheet sheet, int row, int col)

@@ -77,7 +77,10 @@ public static class ReportWriter
         {
             "Элемент", "Итог", "Критично", "Оформление", "Предупреждения", "Комплектность", "Акт",
         };
-        sheet.Cell(1, 1).Value = Titled("Проверка рабочей документации", appVersion);
+        var title = "Проверка рабочей документации";
+        if (!string.IsNullOrWhiteSpace(report.Stage))
+            title += ". Этап " + report.Stage.Trim();
+        sheet.Cell(1, 1).Value = Titled(title, appVersion);
         sheet.Range(1, 1, 1, headers.Length).Merge();
         sheet.Cell(1, 1).Style.Font.Bold = true;
         sheet.Cell(1, 1).Style.Font.FontSize = 16;

@@ -98,6 +98,8 @@ public sealed class ActDocument
     public decimal? AdvanceNet { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = [];
     public IReadOnlyList<Notice> Notices { get; init; } = [];
+    /// <summary>Номер этапа из текста акта, если он есть. «Этап 7.29» сюда не попадает.</summary>
+    public string Stage { get; init; } = "";
 }
 
 public sealed class VerdKit
@@ -121,6 +123,8 @@ public sealed class VerdBook
     public List<string> Errors { get; } = [];
     public List<Notice> Notices { get; } = [];
     public List<LedgerRowIssue> RowIssues { get; } = [];
+    /// <summary>Текст шапки листа до строки столбцов и сама строка столбцов, чтобы найти «Этап N».</summary>
+    public string HeaderText { get; set; } = "";
 }
 
 public sealed class VesrRow
@@ -367,6 +371,8 @@ public sealed class CheckReport
     public bool VerdUnreadable { get; set; }
     public bool VesrUnreadable { get; set; }
     public int LockedFiles { get; set; }
+    /// <summary>Номер этапа. Пусто — в имени файла и в шапке «Сводки» этапа нет.</summary>
+    public string Stage { get; set; } = "";
 }
 
 /// <summary>Сколько файлов увидено при загрузке и как они разошлись с актами.</summary>

@@ -453,7 +453,7 @@ public partial class MainWindow : Window
         var file = await top.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = "Куда сохранить отчёт",
-            SuggestedFileName = "Проверка_РД.xlsx",
+            SuggestedFileName = StageLabel.ReportFileName(_model.Report.Stage, DateTime.Now),
             DefaultExtension = "xlsx",
             FileTypeChoices = [new FilePickerFileType("Книга Excel") { Patterns = ["*.xlsx"] }],
         });
