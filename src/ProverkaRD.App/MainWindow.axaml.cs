@@ -32,6 +32,7 @@ public partial class MainWindow : Window
             versionText.Text = AppInfo.Version;
         _rdList = this.FindControl<ListBox>("RdList") ?? throw new InvalidOperationException("Не найден список комплектов.");
         _actList = this.FindControl<ListBox>("ActList") ?? throw new InvalidOperationException("Не найден список актов.");
+        RestoreLedgers();
         Opened += (_, _) =>
         {
             if (_settings.CheckUpdatesOnStart)
@@ -108,13 +109,17 @@ public partial class MainWindow : Window
     private void OnVesrDrop(object? sender, DragEventArgs e) =>
         DropWorkbook(e, path => _model.VesrPath = path, "ВЭСР");
 
+    private void OnToggleLists(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
+        _model.ListsOpen = !_model.ListsOpen;
+
     private async void OnCheck(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (!_model.CanRun)
             return;
-        if (_model.VerdPath is null && _model.VesrPath is null && _model.ActFiles.Count == 0 && _model.RdFiles.Count == 0)
+        var warning = LedgerGate.Warning(_model.VerdPath, _model.VesrPath);
+        if (warning.Length > 0)
         {
-            _model.StatusText = "Нечего проверять: загрузите ВЭРД, ВЭСР, акты или комплекты.";
+            _model.RejectLedgers(warning);
             return;
         }
 
@@ -256,6 +261,28 @@ public partial class MainWindow : Window
         set(workbook);
         _model.StatusText = title + ": " + Path.GetFileName(workbook);
     }
+
+    private void RestoreLedgers()
+    {
+        LedgerSession.Paths? saved;
+        try
+        {
+            saved = LedgerSession.TakeAfterUpdate(AppSettings.Folder, LedgerHandoff.RestoreRequested);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (saved is null)
+            return;
+        if (!string.IsNullOrWhiteSpace(saved.VerdPath))
+            _model.VerdPath = saved.VerdPath;
+        if (!string.IsNullOrWhiteSpace(saved.VesrPath))
+            _model.VesrPath = saved.VesrPath;
+        if (_model.VerdPath is not null || _model.VesrPath is not null)
+            _model.StatusText = "Ведомости восстановлены после обновления.";
+    }
 }
 
 public sealed class InputFile
@@ -277,8 +304,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     private string _resultLine = "";
     private string _resultDetails = "";
     private bool _hasResult;
-    private bool _actsOpen = true;
-    private bool _rdOpen = true;
+    private bool _listsOpen = true;
     private double _progressValue;
     private string _progressText = "";
     private bool _showProgress;
@@ -296,8 +322,16 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
 
     public WorkspaceModel()
     {
-        RdFiles.CollectionChanged += (_, _) => Raise(nameof(RdEmpty));
-        ActFiles.CollectionChanged += (_, _) => Raise(nameof(ActEmpty));
+        RdFiles.CollectionChanged += (_, _) =>
+        {
+            Raise(nameof(RdEmpty));
+            Raise(nameof(ListsCaption));
+        };
+        ActFiles.CollectionChanged += (_, _) =>
+        {
+            Raise(nameof(ActEmpty));
+            Raise(nameof(ListsCaption));
+        };
     }
 
     public string? VerdPath
@@ -306,6 +340,8 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         set
         {
             _verdPath = value;
+            LedgerHandoff.Verd = value;
+            RememberLedgers();
             Raise(nameof(VerdCaption));
         }
     }
@@ -316,7 +352,21 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         set
         {
             _vesrPath = value;
+            LedgerHandoff.Vesr = value;
+            RememberLedgers();
             Raise(nameof(VesrCaption));
+        }
+    }
+
+    private static void RememberLedgers()
+    {
+        try
+        {
+            LedgerSession.Write(AppSettings.Folder, LedgerHandoff.Verd, LedgerHandoff.Vesr);
+        }
+        catch
+        {
+            // Пути остаются в окне, даже если файл сессии не записался.
         }
     }
 
@@ -349,20 +399,22 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     public string ResultLine => _resultLine;
     public string ResultDetails => _resultDetails;
     public bool HasResult => _hasResult;
-    public bool HasDetails => _hasResult && _resultDetails.Length > 0;
+    public bool ShowCounters => _hasResult && _resultDetails.Length > 0;
     public bool ShowStateDetail => !string.IsNullOrWhiteSpace(_stateDetail);
 
-    public bool ActsOpen
+    public bool ListsOpen
     {
-        get => _actsOpen;
-        set { _actsOpen = value; Raise(); }
+        get => _listsOpen;
+        set
+        {
+            _listsOpen = value;
+            Raise();
+            Raise(nameof(ListsCaption));
+        }
     }
 
-    public bool RdOpen
-    {
-        get => _rdOpen;
-        set { _rdOpen = value; Raise(); }
-    }
+    public string ListsCaption =>
+        (_listsOpen ? "▼" : "▶") + "   Акты: " + ActFiles.Count + "   ·   Комплекты: " + RdFiles.Count;
 
     public ActResult? SelectedAct
     {
@@ -399,7 +451,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         _progressText = "";
         _hasResult = false;
         Raise(nameof(HasResult));
-        Raise(nameof(HasDetails));
+        Raise(nameof(ShowCounters));
         Raise(nameof(ResultLine));
         SetState("checking", "Идёт проверка", "Подготовка списка файлов.");
         Raise(nameof(ShowProgress));
@@ -510,7 +562,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         Raise(nameof(ResultLine));
         Raise(nameof(ResultDetails));
         Raise(nameof(HasResult));
-        Raise(nameof(HasDetails));
+        Raise(nameof(ShowCounters));
         if (report.LockedFiles > 0)
             SetState("locked", "Файл занят другой программой", "Закройте файл в Excel или Word и повторите проверку.");
         else if (report.VerdUnreadable || report.VesrUnreadable)
@@ -520,11 +572,16 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         else
             SetState("finished", "Проверка завершена", "");
         StatusText = _stateTitle;
-        ActsOpen = false;
-        RdOpen = false;
+        ListsOpen = false;
         SelectedAct = null;
         Raise(nameof(CanExport));
         Refilter();
+    }
+
+    public void RejectLedgers(string warning)
+    {
+        SetState("missing", warning, "");
+        StatusText = warning;
     }
 
     private static string MissingText(CheckReport report)

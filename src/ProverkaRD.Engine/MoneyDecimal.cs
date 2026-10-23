@@ -34,7 +34,7 @@ public static class MoneyDecimal
 
     public static decimal? ReadMoney(IXLCell cell)
     {
-        if (cell.IsEmpty())
+        if (cell.IsEmpty() || cell.DataType == XLDataType.Error)
             return null;
         if (cell.DataType == XLDataType.Number)
             return FromExcelDouble(cell.GetDouble());
@@ -44,7 +44,7 @@ public static class MoneyDecimal
     /// <summary>Количество и прочие неденежные числа: decimal без округления до копейки.</summary>
     public static decimal? ReadQuantity(IXLCell cell)
     {
-        if (cell.IsEmpty())
+        if (cell.IsEmpty() || cell.DataType == XLDataType.Error)
             return null;
         if (cell.DataType == XLDataType.Number)
         {

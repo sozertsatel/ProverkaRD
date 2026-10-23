@@ -371,6 +371,62 @@ public class RobustnessTests
         }
     }
 
+    [Fact]
+    public void Vesr_sum_notice_names_the_cell_value_and_the_reason()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-vesr-cell");
+        try
+        {
+            var vesr = Path.Combine(dir.FullName, "vesr.xlsx");
+            using (var book = new XLWorkbook())
+            {
+                var sheet = book.AddWorksheet("ВЭ");
+                sheet.Cell(1, 1).Value = "№ Элемента";
+                sheet.Cell(1, 2).Value = "Наименование";
+                sheet.Cell(1, 6).Value = "Всего";
+                sheet.Cell(2, 1).Value = "4.10.1.1.1";
+                sheet.Cell(2, 2).Value = "Текст в сумме";
+                sheet.Cell(2, 6).Value = "нечисло";
+                sheet.Cell(3, 1).Value = "4.10.1.1.2";
+                sheet.Cell(3, 2).Value = "Ошибка Excel";
+                sheet.Cell(3, 6).Value = XLError.IncompatibleValue;
+                sheet.Cell(4, 1).Value = "4.10.1.1.3";
+                sheet.Cell(4, 2).Value = "Прочерк";
+                sheet.Cell(4, 6).Value = "—";
+                sheet.Cell(5, 6).Value = XLError.DivisionByZero;
+                sheet.Cell(6, 1).Value = "4.10.1.1.4";
+                sheet.Cell(6, 2).Value = "Пустая сумма";
+                book.SaveAs(vesr);
+            }
+
+            var parsed = VesrParser.Parse(vesr);
+            var text = parsed.Notices.Single(notice => notice.Place == "F2");
+            Assert.Contains("Ячейка не разобрана как сумма", text.Message);
+            Assert.Contains("«нечисло»", text.Message);
+            Assert.Contains("текст", text.Message);
+
+            var error = parsed.Notices.Single(notice => notice.Place == "F3");
+            Assert.Contains("«#ЗНАЧ!»", error.Message);
+            Assert.Contains("ошибка Excel", error.Message);
+
+            var blank = parsed.Notices.Single(notice => notice.Place == "F4");
+            Assert.Contains("Пропущена", blank.Message);
+            Assert.DoesNotContain("не разобрана", blank.Message);
+
+            var uncoded = parsed.Notices.Single(notice => notice.Message.Contains("F5"));
+            Assert.Contains("без кода элемента", uncoded.Message);
+            Assert.Contains("«#ДЕЛ/0!»", uncoded.Message);
+            Assert.Contains("пропущена", uncoded.Message);
+            Assert.DoesNotContain("не разобрана", uncoded.Message);
+
+            Assert.DoesNotContain(parsed.Notices, notice => notice.Place == "F6" && notice.Message.Contains("не разобрана"));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
     private static string Nest(string root, string fileName)
     {
         var current = root;

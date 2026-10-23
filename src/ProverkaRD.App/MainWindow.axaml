@@ -13,11 +13,32 @@
         <local:FailBrushConverter x:Key="FailBrush"/>
         <local:MoneyTextConverter x:Key="MoneyText"/>
         <local:StateBrushConverter x:Key="StateBrush"/>
+        <DataTemplate x:Key="CheckNameCell"><local:WrappedCell Text="{Binding CheckName}"/></DataTemplate>
+        <DataTemplate x:Key="InActCell"><local:WrappedCell Text="{Binding InAct}"/></DataTemplate>
+        <DataTemplate x:Key="InRdCell"><local:WrappedCell Text="{Binding InRd}"/></DataTemplate>
+        <DataTemplate x:Key="InVerdCell"><local:WrappedCell Text="{Binding InVerd}"/></DataTemplate>
+        <DataTemplate x:Key="InVesrCell"><local:WrappedCell Text="{Binding InVesr}"/></DataTemplate>
+        <DataTemplate x:Key="PlacesCell"><local:WrappedCell Text="{Binding Places}"/></DataTemplate>
+        <DataTemplate x:Key="ErrorWhereCell"><local:WrappedCell Text="{Binding ErrorWhere}"/></DataTemplate>
+        <DataTemplate x:Key="CompletenessCell"><local:WrappedCell Text="{Binding CompletenessText}"/></DataTemplate>
+        <DataTemplate x:Key="SurnamesCell"><local:WrappedCell Text="{Binding Surnames}"/></DataTemplate>
+        <DataTemplate x:Key="SignersCell"><local:WrappedCell Text="{Binding Signers}"/></DataTemplate>
+        <DataTemplate x:Key="NoticeCell"><local:WrappedCell Text="{Binding Message}"/></DataTemplate>
     </Window.Resources>
 
     <Window.Styles>
         <Style Selector="DataGridRow">
             <Setter Property="Background" Value="White"/>
+        </Style>
+        <Style Selector="TabControl">
+            <Setter Property="VerticalAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        </Style>
+        <Style Selector="DataGrid">
+            <Setter Property="VerticalAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
         </Style>
     </Window.Styles>
 
@@ -26,7 +47,7 @@
             <Grid ColumnDefinitions="*,Auto">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <TextBlock Text="Проверка РД" FontSize="28" FontWeight="Bold" Foreground="White"/>
-                    <TextBlock x:Name="VersionText" Text="0.1.2" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+                    <TextBlock x:Name="VersionText" Text="0.1.3" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
                 </StackPanel>
                 <Button Grid.Column="1" Classes="onDark" Click="OnSettings" VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal" Spacing="8">
@@ -39,11 +60,9 @@
 
         <Border DockPanel.Dock="Top" Padding="18,10" Background="{Binding StateKind, Converter={StaticResource StateBrush}}">
             <StackPanel Spacing="4">
-                <TextBlock Text="{Binding StateTitle}" FontWeight="SemiBold" FontSize="16"/>
+                <TextBlock Text="{Binding StateTitle}" FontWeight="SemiBold" FontSize="16" TextWrapping="Wrap"/>
                 <TextBlock Text="{Binding ResultLine}" FontSize="22" FontWeight="Bold" TextWrapping="Wrap" IsVisible="{Binding HasResult}"/>
-                <Expander Header="Подробнее" IsVisible="{Binding HasDetails}" IsExpanded="False" Padding="0">
-                    <TextBlock Text="{Binding ResultDetails}" TextWrapping="Wrap" Margin="0,4,0,0"/>
-                </Expander>
+                <TextBlock Text="{Binding ResultDetails}" TextWrapping="Wrap" IsVisible="{Binding ShowCounters}"/>
                 <TextBlock Text="{Binding StateDetail}" TextWrapping="Wrap" IsVisible="{Binding ShowStateDetail}"/>
                 <ProgressBar Minimum="0" Maximum="1" Value="{Binding ProgressValue}" IsVisible="{Binding ShowProgress}" Height="8"/>
                 <TextBlock Text="{Binding ProgressText}" IsVisible="{Binding ShowProgress}" FontWeight="SemiBold"/>
@@ -80,83 +99,83 @@
         </Border>
 
         <Grid Margin="16" RowDefinitions="Auto,*">
-            <Grid ColumnDefinitions="*,12,*">
-                <Border Grid.Column="0" Background="White" CornerRadius="10" BorderBrush="#E2E7EE" BorderThickness="1"
-                        DragDrop.AllowDrop="True" DragDrop.Drop="OnActDrop">
-                    <Expander IsExpanded="{Binding ActsOpen, Mode=TwoWay}" Padding="12" HorizontalAlignment="Stretch">
-                        <Expander.Header>
-                            <TextBlock Text="Акты сдачи-приёмки" FontWeight="SemiBold" FontSize="16"/>
-                        </Expander.Header>
-                        <DockPanel>
-                            <StackPanel DockPanel.Dock="Top" Spacing="8">
-                                <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
-                                           Text="DOCX. Номер элемента читается из имени файла, строки «АКТ №» и скобок в «№ тома»."/>
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Button Classes="quiet" Content="Файлы" Click="OnAddActFiles" IsEnabled="{Binding CanRun}"/>
-                                    <Button Classes="quiet" Content="Папка" Click="OnAddActFolder" IsEnabled="{Binding CanRun}"/>
-                                    <Button Classes="quiet" Content="Удалить" Click="OnRemoveAct" IsEnabled="{Binding CanRun}"/>
-                                    <Button Classes="quiet" Content="Очистить" Click="OnClearActs" IsEnabled="{Binding CanRun}"/>
+            <Border Background="White" CornerRadius="10" BorderBrush="#E2E7EE" BorderThickness="1" VerticalAlignment="Top">
+                <StackPanel>
+                    <Grid ColumnDefinitions="*,*" MinHeight="36" ToolTip.Tip="Показать или скрыть списки файлов">
+                        <Button Grid.Column="0" Classes="listBar" Click="OnToggleLists"
+                                DragDrop.AllowDrop="True" DragDrop.Drop="OnActDrop"/>
+                        <Button Grid.Column="1" Classes="listBar" Click="OnToggleLists"
+                                DragDrop.AllowDrop="True" DragDrop.Drop="OnRdDrop"/>
+                        <TextBlock Grid.ColumnSpan="2" IsHitTestVisible="False" Margin="14,0" VerticalAlignment="Center"
+                                   FontWeight="SemiBold" Foreground="#1F4E79" Text="{Binding ListsCaption}"/>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,*" IsVisible="{Binding ListsOpen}">
+                        <Border Padding="12,4,12,12" DragDrop.AllowDrop="True" DragDrop.Drop="OnActDrop">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top" Spacing="8">
+                                    <TextBlock Text="Акты сдачи-приёмки" FontWeight="SemiBold" FontSize="16"/>
+                                    <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
+                                               Text="DOCX. Номер элемента читается из имени файла, строки «АКТ №» и скобок в «№ тома»."/>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Button Classes="quiet" Content="Файлы" Click="OnAddActFiles" IsEnabled="{Binding CanRun}"/>
+                                        <Button Classes="quiet" Content="Папка" Click="OnAddActFolder" IsEnabled="{Binding CanRun}"/>
+                                        <Button Classes="quiet" Content="Удалить" Click="OnRemoveAct" IsEnabled="{Binding CanRun}"/>
+                                        <Button Classes="quiet" Content="Очистить" Click="OnClearActs" IsEnabled="{Binding CanRun}"/>
+                                    </StackPanel>
                                 </StackPanel>
-                            </StackPanel>
-                            <Panel Margin="0,8,0,0">
-                                <ListBox x:Name="ActList" ItemsSource="{Binding ActFiles}" MaxHeight="168" MinHeight="96">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                                <TextBlock IsVisible="{Binding ActEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
-                                           Text="Перетащите сюда акты или выберите файлы и папку."/>
-                            </Panel>
-                        </DockPanel>
-                    </Expander>
-                </Border>
-
-                <Border Grid.Column="2" Background="White" CornerRadius="10" BorderBrush="#E2E7EE" BorderThickness="1"
-                        DragDrop.AllowDrop="True" DragDrop.Drop="OnRdDrop">
-                    <Expander IsExpanded="{Binding RdOpen, Mode=TwoWay}" Padding="12" HorizontalAlignment="Stretch">
-                        <Expander.Header>
-                            <TextBlock Text="Комплекты РД" FontWeight="SemiBold" FontSize="16"/>
-                        </Expander.Header>
-                        <DockPanel>
-                            <StackPanel DockPanel.Dock="Top" Spacing="8">
-                                <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
-                                           Text="PDF и DOCX. Подпись .sig подхватывается рядом с файлом и в список отдельно не попадает."/>
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Button Classes="quiet" Content="Файлы" Click="OnAddRdFiles" IsEnabled="{Binding CanRun}"/>
-                                    <Button Classes="quiet" Content="Папка" Click="OnAddRdFolder" IsEnabled="{Binding CanRun}"/>
-                                    <Button Classes="quiet" Content="Удалить" Click="OnRemoveRd" IsEnabled="{Binding CanRun}"/>
-                                    <Button Classes="quiet" Content="Очистить" Click="OnClearRd" IsEnabled="{Binding CanRun}"/>
+                                <Panel Margin="0,8,0,0">
+                                    <ListBox x:Name="ActList" ItemsSource="{Binding ActFiles}" MaxHeight="140" MinHeight="72">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock IsVisible="{Binding ActEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
+                                               Text="Перетащите сюда акты или выберите файлы и папку."/>
+                                </Panel>
+                            </DockPanel>
+                        </Border>
+                        <Border Grid.Column="1" Padding="12,4,12,12" BorderBrush="#E2E7EE" BorderThickness="1,0,0,0"
+                                DragDrop.AllowDrop="True" DragDrop.Drop="OnRdDrop">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top" Spacing="8">
+                                    <TextBlock Text="Комплекты РД" FontWeight="SemiBold" FontSize="16"/>
+                                    <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
+                                               Text="PDF и DOCX. Подпись .sig подхватывается рядом с файлом и в список отдельно не попадает."/>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Button Classes="quiet" Content="Файлы" Click="OnAddRdFiles" IsEnabled="{Binding CanRun}"/>
+                                        <Button Classes="quiet" Content="Папка" Click="OnAddRdFolder" IsEnabled="{Binding CanRun}"/>
+                                        <Button Classes="quiet" Content="Удалить" Click="OnRemoveRd" IsEnabled="{Binding CanRun}"/>
+                                        <Button Classes="quiet" Content="Очистить" Click="OnClearRd" IsEnabled="{Binding CanRun}"/>
+                                    </StackPanel>
                                 </StackPanel>
-                            </StackPanel>
-                            <Panel Margin="0,8,0,0">
-                                <ListBox x:Name="RdList" ItemsSource="{Binding RdFiles}" MaxHeight="168" MinHeight="96">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                                <TextBlock IsVisible="{Binding RdEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
-                                           Text="Перетащите сюда комплекты или выберите файлы и папку."/>
-                            </Panel>
-                        </DockPanel>
-                    </Expander>
-                </Border>
-            </Grid>
-
-            <DockPanel Grid.Row="1" Margin="0,12,0,0">
-                <StackPanel DockPanel.Dock="Top" Margin="2,0,0,8">
-                    <Grid ColumnDefinitions="*,Auto">
-                        <TextBox PlaceholderText="Фильтр по акту, шифру или тексту" Text="{Binding FilterText}" Width="320" HorizontalAlignment="Left"/>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
-                            <Button Content="Выгрузить отчёт (Excel)" Click="OnExport" IsEnabled="{Binding CanExport}" VerticalAlignment="Center"/>
-                            <Button Classes="accent" Content="Проверить" Click="OnCheck" IsEnabled="{Binding CanRun}"/>
-                        </StackPanel>
+                                <Panel Margin="0,8,0,0">
+                                    <ListBox x:Name="RdList" ItemsSource="{Binding RdFiles}" MaxHeight="140" MinHeight="72">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock IsVisible="{Binding RdEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
+                                               Text="Перетащите сюда комплекты или выберите файлы и папку."/>
+                                </Panel>
+                            </DockPanel>
+                        </Border>
                     </Grid>
                 </StackPanel>
-                <TabControl>
+            </Border>
+
+            <Grid Grid.Row="1" Margin="0,12,0,0" RowDefinitions="Auto,*">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBox PlaceholderText="Фильтр по акту, шифру или тексту" Text="{Binding FilterText}" Width="320" HorizontalAlignment="Left"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                        <Button Content="Выгрузить отчёт (Excel)" Click="OnExport" IsEnabled="{Binding CanExport}" VerticalAlignment="Center"/>
+                        <Button Classes="accent" Content="Проверить" Click="OnCheck" IsEnabled="{Binding CanRun}"/>
+                    </StackPanel>
+                </Grid>
+                <TabControl Grid.Row="1" Margin="0,8,0,0">
                     <TabItem Header="Акты">
                         <Grid RowDefinitions="*,Auto">
                             <DataGrid ItemsSource="{Binding FilteredActs}" SelectedItem="{Binding SelectedAct, Mode=TwoWay}"
@@ -259,7 +278,7 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Состав" Binding="{Binding CompletenessText}" Width="360"/>
+                                    <DataGridTemplateColumn Header="Состав" Width="280" MinWidth="140" SortMemberPath="CompletenessText" CellTemplate="{StaticResource CompletenessCell}"/>
                                 </DataGrid.Columns>
                             </DataGrid>
                             <Border Grid.Row="1" IsVisible="{Binding HasSelectedAct}" Margin="0,8,0,0" Padding="10" Background="White"
@@ -287,11 +306,11 @@
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
-                                            <DataGridTextColumn Header="Что проверялось" Binding="{Binding CheckName}" Width="220"/>
-                                            <DataGridTextColumn Header="В акте" Binding="{Binding InAct}" Width="200"/>
-                                            <DataGridTextColumn Header="В РД" Binding="{Binding InRd}" Width="200"/>
-                                            <DataGridTextColumn Header="В ВЭРД" Binding="{Binding InVerd}" Width="200"/>
-                                            <DataGridTextColumn Header="В ВЭСР" Binding="{Binding InVesr}" Width="200"/>
+                                            <DataGridTemplateColumn Header="Что проверялось" Width="*" MinWidth="140" SortMemberPath="CheckName" CellTemplate="{StaticResource CheckNameCell}"/>
+                                            <DataGridTemplateColumn Header="В акте" Width="160" MinWidth="96" SortMemberPath="InAct" CellTemplate="{StaticResource InActCell}"/>
+                                            <DataGridTemplateColumn Header="В РД" Width="120" MinWidth="80" SortMemberPath="InRd" CellTemplate="{StaticResource InRdCell}"/>
+                                            <DataGridTemplateColumn Header="В ВЭРД" Width="160" MinWidth="96" SortMemberPath="InVerd" CellTemplate="{StaticResource InVerdCell}"/>
+                                            <DataGridTemplateColumn Header="В ВЭСР" Width="96" MinWidth="72" SortMemberPath="InVesr" CellTemplate="{StaticResource InVesrCell}"/>
                                         </DataGrid.Columns>
                                     </DataGrid>
                                 </DockPanel>
@@ -344,8 +363,8 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="В документе" Binding="{Binding Surnames}" Width="280"/>
-                                <DataGridTextColumn Header="Подписанты" Binding="{Binding Signers}" Width="280"/>
+                                <DataGridTemplateColumn Header="В документе" Width="220" MinWidth="120" SortMemberPath="Surnames" CellTemplate="{StaticResource SurnamesCell}"/>
+                                <DataGridTemplateColumn Header="Подписанты" Width="220" MinWidth="120" SortMemberPath="Signers" CellTemplate="{StaticResource SignersCell}"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </TabItem>
@@ -361,8 +380,8 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="90"/>
-                                <DataGridTemplateColumn Header="Критичность" Width="150">
+                                <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="80"/>
+                                <DataGridTemplateColumn Header="Критичность" Width="132">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Border Background="{Binding Severity, Converter={StaticResource SevBrush}}" CornerRadius="4" Padding="8,2" HorizontalAlignment="Left">
@@ -371,13 +390,13 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="Что проверялось" Binding="{Binding CheckName}" Width="260"/>
-                                <DataGridTextColumn Header="В акте" Binding="{Binding InAct}" Width="220"/>
-                                <DataGridTextColumn Header="В РД" Binding="{Binding InRd}" Width="220"/>
-                                <DataGridTextColumn Header="В ВЭРД" Binding="{Binding InVerd}" Width="220"/>
-                                <DataGridTextColumn Header="В ВЭСР" Binding="{Binding InVesr}" Width="220"/>
-                                <DataGridTextColumn Header="Где" Binding="{Binding Places}" Width="280"/>
-                                <DataGridTextColumn Header="Где ошибка" Binding="{Binding ErrorWhere}" Width="280"/>
+                                <DataGridTemplateColumn Header="Что проверялось" Width="170" MinWidth="140" SortMemberPath="CheckName" CellTemplate="{StaticResource CheckNameCell}"/>
+                                <DataGridTemplateColumn Header="В акте" Width="150" MinWidth="96" SortMemberPath="InAct" CellTemplate="{StaticResource InActCell}"/>
+                                <DataGridTemplateColumn Header="В РД" Width="120" MinWidth="80" SortMemberPath="InRd" CellTemplate="{StaticResource InRdCell}"/>
+                                <DataGridTemplateColumn Header="В ВЭРД" Width="150" MinWidth="96" SortMemberPath="InVerd" CellTemplate="{StaticResource InVerdCell}"/>
+                                <DataGridTemplateColumn Header="В ВЭСР" Width="96" MinWidth="72" SortMemberPath="InVesr" CellTemplate="{StaticResource InVesrCell}"/>
+                                <DataGridTemplateColumn Header="Где" Width="*" MinWidth="150" SortMemberPath="Places" CellTemplate="{StaticResource PlacesCell}"/>
+                                <DataGridTemplateColumn Header="Где ошибка" Width="*" MinWidth="160" SortMemberPath="ErrorWhere" CellTemplate="{StaticResource ErrorWhereCell}"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </TabItem>
@@ -386,14 +405,14 @@
                                   GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
                                   AutoGenerateColumns="False">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Источник" Binding="{Binding Source}" Width="140"/>
-                                <DataGridTextColumn Header="Место" Binding="{Binding Place}" Width="360"/>
-                                <DataGridTextColumn Header="Сообщение" Binding="{Binding Message}" Width="640"/>
+                                <DataGridTextColumn Header="Источник" Binding="{Binding Source}" Width="120"/>
+                                <DataGridTextColumn Header="Место" Binding="{Binding Place}" Width="160" MinWidth="100"/>
+                                <DataGridTemplateColumn Header="Сообщение" Width="*" MinWidth="240" SortMemberPath="Message" CellTemplate="{StaticResource NoticeCell}"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </TabItem>
                 </TabControl>
-            </DockPanel>
+            </Grid>
         </Grid>
     </DockPanel>
 </Window>

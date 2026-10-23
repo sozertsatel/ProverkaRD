@@ -205,7 +205,8 @@ public static partial class VesrParser
                     continue;
                 if (code.Length == 0 && name.Length == 0)
                 {
-                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, RowSkip.Reason(code, name, unitText, qtyText, priceText, totalText)));
+                    book.Notices.Add(new Notice("ВЭСР", "строка " + r,
+                        DescribeSkipped(sheet, r, cols, code, name, unitText, qtyText, priceText, totalText, withoutCode: true)));
                     continue;
                 }
                 if (code.Contains("элемент", StringComparison.OrdinalIgnoreCase))
@@ -220,7 +221,8 @@ public static partial class VesrParser
                 }
                 if (!StartsWithDigit().IsMatch(code))
                 {
-                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, RowSkip.Reason(code, name, unitText, qtyText, priceText, totalText)));
+                    book.Notices.Add(new Notice("ВЭСР", "строка " + r,
+                        DescribeSkipped(sheet, r, cols, code, name, unitText, qtyText, priceText, totalText, withoutCode: false)));
                     continue;
                 }
 
@@ -303,6 +305,34 @@ public static partial class VesrParser
         return TextMatch.StripInvisible(cell.GetFormattedString()).Replace('\u00A0', ' ').Trim();
     }
 
+    private static string DescribeSkipped(
+        IXLWorksheet sheet,
+        int row,
+        Columns cols,
+        string code,
+        string name,
+        string unitText,
+        string qtyText,
+        string priceText,
+        string totalText,
+        bool withoutCode)
+    {
+        var money = UnparsedSum(sheet, row, cols.Total) ?? UnparsedSum(sheet, row, cols.Price);
+        if (withoutCode && money is { IsError: true })
+            return "Пропущена строка без кода элемента. " + money.Value.Text;
+        var reason = RowSkip.Reason(code, name, unitText, qtyText, priceText, totalText);
+        if (money is null)
+            return reason;
+        return reason.TrimEnd('.') + ". " + money.Value.Text;
+    }
+
+    private static MoneyCellNote.Unparsed? UnparsedSum(IXLWorksheet sheet, int row, int col)
+    {
+        if (col <= 0)
+            return null;
+        return MoneyCellNote.DescribeUnparsed(sheet.Cell(row, col));
+    }
+
     private static decimal? ReadMoneyCell(VesrBook book, IXLWorksheet sheet, int row, int col)
     {
         if (col <= 0)
@@ -310,16 +340,31 @@ public static partial class VesrParser
         var cell = sheet.Cell(row, col);
         if (cell.IsEmpty())
             return null;
+        var place = cell.Address.ToString() ?? "";
         try
         {
+            if (MoneyCellNote.IsError(cell))
+            {
+                book.Notices.Add(new Notice("ВЭСР", place, MoneyCellNote.Failure(cell)));
+                return null;
+            }
+
+            if (MoneyCellNote.IsBlankValue(cell))
+            {
+                book.Notices.Add(new Notice("ВЭСР", place, "Пропущена пустая ячейка."));
+                return null;
+            }
+
             var money = MoneyDecimal.ReadMoney(cell);
             if (money is null)
-                book.Notices.Add(new Notice("ВЭСР", cell.Address.ToString() ?? "", "Ячейка не разобрана как сумма."));
+                book.Notices.Add(new Notice("ВЭСР", place, MoneyCellNote.Failure(cell)));
             return money;
         }
         catch (Exception ex)
         {
-            book.Notices.Add(new Notice("ВЭСР", cell.Address.ToString() ?? "", "Ячейка не разобрана как сумма: " + ex.Message));
+            var shown = MoneyCellNote.Shown(cell);
+            var tail = shown.Length == 0 ? ex.Message : "«" + shown + "», " + ex.Message;
+            book.Notices.Add(new Notice("ВЭСР", place, "Ячейка не разобрана как сумма: " + tail));
             return null;
         }
     }

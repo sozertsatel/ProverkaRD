@@ -119,7 +119,12 @@ public static class AppUpdate
 
         try
         {
-            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+            RememberLedgers();
+            Process.Start(new ProcessStartInfo(exe)
+            {
+                UseShellExecute = true,
+                Arguments = LedgerSession.RestoreArgument,
+            });
         }
         catch (Exception ex)
         {
@@ -141,6 +146,7 @@ public static class AppUpdate
 
         try
         {
+            RememberLedgers();
             var script = Path.Combine(Path.GetTempPath(), "proverkard-update-" + Environment.ProcessId + ".cmd");
             var backupName = Path.GetFileName(exe) + ".old";
             var text = string.Join("\r\n",
@@ -159,7 +165,7 @@ public static class AppUpdate
                 ")",
                 "copy /y \"" + downloadedExe + "\" \"" + exe + "\"",
                 "if errorlevel 1 goto retry",
-                "start \"\" \"" + exe + "\"",
+                "start \"\" \"" + exe + "\" " + LedgerSession.RestoreArgument,
                 "del \"%~f0\"",
             ]);
             File.WriteAllText(script, text);
@@ -177,6 +183,18 @@ public static class AppUpdate
             return new InstallOutcome(
                 InstallKind.Manual,
                 "Нет прав записать новую версию в папку программы (" + ex.Message + "). Скачайте ProverkaRD.exe со страницы релиза.");
+        }
+    }
+
+    private static void RememberLedgers()
+    {
+        try
+        {
+            LedgerSession.Save(AppSettings.Folder, LedgerHandoff.Verd, LedgerHandoff.Vesr);
+        }
+        catch
+        {
+            // Без файла сессии новая копия откроется без выбранных ведомостей.
         }
     }
 

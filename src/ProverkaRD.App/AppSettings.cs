@@ -8,6 +8,8 @@ public sealed class AppSettings
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ProverkaRD");
 
+    public static string Folder => SettingsDir;
+
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     public List<string> IgnoredSigners { get; set; } = [];
