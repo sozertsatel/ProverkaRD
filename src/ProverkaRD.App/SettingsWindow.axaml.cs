@@ -9,6 +9,7 @@ public partial class SettingsWindow : Window
 {
     private readonly AppSettings _settings;
     private readonly CheckBox _groupDuplicates;
+    private readonly CheckBox _readZip;
     private readonly CheckBox _updates;
     private readonly TextBox _ignored;
     private readonly TextBox _vat;
@@ -22,10 +23,12 @@ public partial class SettingsWindow : Window
         _settings = settings;
         AvaloniaXamlLoader.Load(this);
         _groupDuplicates = this.FindControl<CheckBox>("GroupDuplicatesBox")!;
+        _readZip = this.FindControl<CheckBox>("ReadZipBox")!;
         _updates = this.FindControl<CheckBox>("UpdatesBox")!;
         _ignored = this.FindControl<TextBox>("IgnoredBox")!;
         _vat = this.FindControl<TextBox>("VatBox")!;
         _groupDuplicates.IsChecked = settings.GroupDuplicateFindings;
+        _readZip.IsChecked = settings.ReadZipArchives;
         _updates.IsChecked = settings.CheckUpdatesOnStart;
         _ignored.Text = string.Join(Environment.NewLine, settings.IgnoredSigners);
         _vat.Text = settings.VatPercent.ToString("0.##", CultureInfo.GetCultureInfo("ru-RU"));
@@ -64,6 +67,7 @@ public partial class SettingsWindow : Window
     private void Save()
     {
         _settings.GroupDuplicateFindings = _groupDuplicates.IsChecked == true;
+        _settings.ReadZipArchives = _readZip.IsChecked == true;
         _settings.CheckUpdatesOnStart = _updates.IsChecked == true;
         _settings.VatPercent = ReadVat(_vat.Text);
         _settings.IgnoredSigners = (_ignored.Text ?? "")

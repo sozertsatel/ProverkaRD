@@ -39,7 +39,9 @@ public class EngineRulesTests
         {
             new KitResult { ActName = "РД 7.29", ElementNo = "7.29", Cipher = "000-00-0000-А-1.60-07-ТМ2", Overall = Severity.Critical },
         };
-        Assert.Equal(Severity.Critical, ActScore.Score(kits, [], kitRows).Overall);
+        var kitOnly = ActScore.Score(kits, [], kitRows);
+        Assert.Equal(0, kitOnly.Critical);
+        Assert.NotEqual(Severity.Critical, kitOnly.Overall);
 
         var clean = new ActResult { FileName = "РД 7.01", ElementNo = "7.01" };
         Assert.Equal(Severity.Ok, ActScore.Score(clean, [], []).Overall);

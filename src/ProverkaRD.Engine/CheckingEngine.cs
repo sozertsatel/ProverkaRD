@@ -8,6 +8,8 @@ public sealed partial class CheckingEngine
 {
     private readonly List<Finding> _findings = [];
     private readonly List<RdDocument> _stray = [];
+    private readonly Dictionary<string, string> _contentHash = new(StringComparer.OrdinalIgnoreCase);
+    private int _skippedZips;
     private bool _rdFilesLoaded;
     private string _currentElement = "";
     private string _currentActPath = "";
@@ -18,6 +20,8 @@ public sealed partial class CheckingEngine
         cancellationToken.ThrowIfCancellationRequested();
         _findings.Clear();
         _stray.Clear();
+        _contentHash.Clear();
+        _skippedZips = 0;
         _currentElement = "";
         _currentActPath = "";
         _options = input.Options ?? new CheckOptions();
@@ -27,7 +31,8 @@ public sealed partial class CheckingEngine
             VesrFileName = NameOf(input.VesrPath),
         };
 
-        var rdItems = ListRd(input);
+        var rdItems = ListRd(input, _contentHash, out var skippedZips);
+        _skippedZips = skippedZips;
         var actPaths = DistinctFiles(input.ActPaths).ToList();
         var kitCount = rdItems.Count(item => item.Kind == "kit");
         var verdSteps = string.IsNullOrWhiteSpace(input.VerdPath) ? 0 : 1;
@@ -222,6 +227,8 @@ public sealed partial class CheckingEngine
                     list.Add(rd);
             }
         }
+
+        NoteDuplicateCiphers(rdFiles);
 
         var usedRd = new HashSet<RdDocument>();
         foreach (var act in acts.OrderBy(a => ElementSortKey(ResolvedPreview(a)), IntArrayComparer.Instance))
@@ -705,62 +712,66 @@ public sealed partial class CheckingEngine
         else if (titleCipher.Length == 0)
             shownTitle = fileCipher;
 
-        var cipherStatus = CompareMany(actCipher, verdCipher, titleCipher, fileCipher);
-        var cipherBlame = cipherStatus == Severity.Ok ? "" : SourceBlame.Of(actCipher, titleCipher, verdCipher);
-        if (cipherStatus != Severity.Ok)
+        // Строка без акта не сравнивает шифр, имена и номер: пустой акт давал ложное «Критично».
+        var hasAct = actKit is not null
+            || (!string.IsNullOrWhiteSpace(actPath) && !string.Equals(actLabel, "—", StringComparison.Ordinal));
+
+        var cipherStatus = Severity.Ok;
+        var cipherBlame = "";
+        if (hasAct)
         {
-            var (left, right) = FirstMismatch(actCipher, verdCipher, titleCipher, fileCipher);
-            _findings.Add(new Finding(
-                actLabel,
-                cipher,
-                "Шифр",
-                TextMatch.ForReport(left),
-                TextMatch.ForReport(right),
-                cipherStatus,
-                "",
-                _currentElement,
-                TextMatch.ForReport(actCipher),
-                TextMatch.ForReport(shownTitle),
-                TextMatch.ForReport(verdCipher),
-                "",
-                _currentActPath,
-                ErrorWhere: cipherBlame));
+            cipherStatus = CompareMany(actCipher, verdCipher, titleCipher, fileCipher);
+            cipherBlame = cipherStatus == Severity.Ok ? "" : SourceBlame.Of(actCipher, titleCipher, verdCipher);
+            if (cipherStatus != Severity.Ok)
+            {
+                var (left, right) = FirstMismatch(actCipher, verdCipher, titleCipher, fileCipher);
+                _findings.Add(new Finding(
+                    actLabel,
+                    cipher,
+                    "Шифр",
+                    TextMatch.ForReport(left),
+                    TextMatch.ForReport(right),
+                    cipherStatus,
+                    "",
+                    _currentElement,
+                    TextMatch.ForReport(actCipher),
+                    TextMatch.ForReport(shownTitle),
+                    TextMatch.ForReport(verdCipher),
+                    "",
+                    _currentActPath,
+                    ErrorWhere: cipherBlame));
+            }
         }
 
         var actName = actKit?.Name ?? "";
         var verdName = verdKit?.Name ?? "";
         var rdName = rd?.KitName ?? "";
-        var nameStatus = actKit is null && verdKit is null && rd is null
-            ? Severity.Ok
-            : EmitField(actLabel, cipher, "Наименование комплекта", actName, rdName, verdName, "");
-        if (actKit is not null && verdKit is null)
+        var nameStatus = Severity.Ok;
+        if (hasAct && !(actKit is null && verdKit is null && rd is null))
+            nameStatus = EmitField(actLabel, cipher, "Наименование комплекта", actName, rdName, verdName, "");
+        if (hasAct && actKit is not null && verdKit is null)
             nameStatus = SeverityText.Worst(nameStatus, Severity.Critical);
-        if (actKit is null && verdKit is not null)
+        if (hasAct && actKit is null && verdKit is not null)
             nameStatus = SeverityText.Worst(nameStatus, Severity.Critical);
         var nameBlame = nameStatus == Severity.Ok ? "" : SourceBlame.Of(actName, rdName, verdName);
 
         var actElement = actElementName ?? "";
         var verdElement = element?.Name ?? "";
         var rdElement = rd?.ElementName ?? "";
-        var elementNameStatus = EmitField(actLabel, cipher, "Наименование элемента", actElement, rdElement, verdElement, "");
-        var elementNameBlame = elementNameStatus == Severity.Ok ? "" : SourceBlame.Of(actElement, rdElement, verdElement);
+        var elementNameStatus = Severity.Ok;
+        var elementNameBlame = "";
+        if (hasAct)
+        {
+            elementNameStatus = EmitField(actLabel, cipher, "Наименование элемента", actElement, rdElement, verdElement, "");
+            elementNameBlame = elementNameStatus == Severity.Ok ? "" : SourceBlame.Of(actElement, rdElement, verdElement);
+        }
 
         var rdElementNo = rd?.ElementNo ?? "";
         var verdElementNo = element?.Number ?? "";
         var actElementNo = _currentElement;
         var elementNoStatus = Severity.Ok;
-        if (rd is not null && element is not null && rdElementNo.Length == 0)
-        {
-            elementNoStatus = Severity.Critical;
-            _findings.Add(new Finding(
-                actLabel, cipher, "Номер элемента", "", verdElementNo, Severity.Critical, "",
-                _currentElement, TextMatch.ForReport(actElementNo), "", TextMatch.ForReport(verdElementNo), "",
-                _currentActPath));
-        }
-        else
-        {
-            elementNoStatus = EmitField(actLabel, cipher, "Номер элемента", actElementNo, rdElementNo, verdElementNo, "");
-        }
+        if (hasAct)
+            elementNoStatus = EmitElementNumber(actLabel, cipher, actElementNo, rdElementNo, verdElementNo);
 
         var pdfState = rd is null ? "нет" : "есть";
         var sigState = rd is null ? "нет" : rd.SignaturePath is null ? "нет" : "есть";
@@ -1299,6 +1310,8 @@ public sealed partial class CheckingEngine
                 + ").";
         }
 
+        if (_skippedZips > 0)
+            text += " пропущено zip: " + _skippedZips + ".";
         text += " Ставка НДС: " + VatPercentText + "%.";
         return new LoadStats
         {
@@ -1318,24 +1331,183 @@ public sealed partial class CheckingEngine
         };
     }
 
+    private void NoteDuplicateCiphers(List<RdDocument> rdFiles)
+    {
+        foreach (var group in rdFiles.GroupBy(rd => TextMatch.CodeKey(rd.Cipher)))
+        {
+            if (group.Key.Length == 0)
+                continue;
+            var copies = group.ToList();
+            if (copies.Count < 2)
+                continue;
+            var hashes = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var copy in copies)
+            {
+                if (_contentHash.TryGetValue(copy.FilePath, out var hash))
+                    hashes.Add(hash);
+            }
+
+            if (hashes.Count < 2)
+                continue;
+            var paths = copies.Select(copy => copy.FilePath).ToList();
+            Add("—", copies[0].Cipher, "Дубль комплекта",
+                "Дубль комплекта: " + copies.Count + " копий",
+                "",
+                Severity.Warning,
+                string.Join("; ", paths));
+        }
+    }
+
+    private Severity EmitElementNumber(string actLabel, string cipher, string actElementNo, string rdElementNo, string verdElementNo)
+    {
+        var severity = EmitField(actLabel, cipher, "Номер элемента", actElementNo, rdElementNo, verdElementNo, "");
+        if (severity != Severity.Critical || !ElementNumbersAgree(actElementNo, rdElementNo, verdElementNo))
+            return severity;
+
+        for (var i = _findings.Count - 1; i >= 0; i--)
+        {
+            var finding = _findings[i];
+            if (finding.CheckName == "Номер элемента" && finding.Kit == cipher && finding.Severity == Severity.Critical)
+            {
+                _findings.RemoveAt(i);
+                break;
+            }
+        }
+
+        return Severity.Ok;
+    }
+
+    /// <summary>Одинаковые номера («6.65» и «6.65», также «6,65») не бывают критичными.</summary>
+    private static bool ElementNumbersAgree(params string[] values)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var value in values)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                continue;
+            keys.Add(ElementNumberKey(value));
+        }
+
+        return keys.Count <= 1;
+    }
+
+    private static string ElementNumberKey(string value)
+    {
+        var text = TextMatch.Normalize(value).Replace(',', '.');
+        var parts = new List<string>();
+        var current = "";
+        foreach (var ch in text)
+        {
+            if (char.IsDigit(ch))
+            {
+                current += ch;
+                continue;
+            }
+
+            if (current.Length == 0)
+                continue;
+            parts.Add(current.TrimStart('0') is { Length: > 0 } trimmed ? trimmed : "0");
+            current = "";
+        }
+
+        if (current.Length > 0)
+            parts.Add(current.TrimStart('0') is { Length: > 0 } trimmed ? trimmed : "0");
+        return string.Join(".", parts);
+    }
+
     private readonly record struct RdInput(string Path, string Kind);
 
-    private static List<RdInput> ListRd(CheckInput input)
+    private static List<RdInput> ListRd(CheckInput input, Dictionary<string, string> hashes, out int skippedZips)
     {
+        var readZip = input.Options.ReadZipArchives;
+        var seenZips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        skippedZips = 0;
         var items = new List<RdInput>();
+        var kits = new List<string>();
         foreach (var path in DistinctFiles(input.RdPaths))
         {
             if (Directory.Exists(SafePath.ForIo(path)))
+            {
                 items.Add(new RdInput(path, "folder"));
-            else if (path.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
+                continue;
+            }
+
+            if (RdIntake.IsZip(path))
+            {
+                TakeZip(path, readZip, seenZips, kits, ref skippedZips);
+                continue;
+            }
+
+            if (path.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
                 items.Add(new RdInput(path, "signature"));
             else if (RdFileRules.IsAuxiliary(path))
                 items.Add(new RdInput(path, "auxiliary"));
             else
-                items.Add(new RdInput(path, "kit"));
+                kits.Add(path);
+        }
+
+        foreach (var folder in input.RdFolders)
+            CollectFolderZips(folder, readZip, seenZips, kits, ref skippedZips);
+        foreach (var path in input.RdPaths)
+        {
+            if (Directory.Exists(SafePath.ForIo(path)))
+                CollectFolderZips(path, readZip, seenZips, kits, ref skippedZips);
+        }
+
+        foreach (var kit in RdIntake.Deduplicate(kits))
+        {
+            items.Add(new RdInput(kit, "kit"));
+            try
+            {
+                hashes[kit] = RdIntake.ContentHash(kit);
+            }
+            catch
+            {
+                hashes[kit] = "path\n" + kit;
+            }
         }
 
         return items;
+    }
+
+    private static void CollectFolderZips(string folder, bool readZip, HashSet<string> seenZips, List<string> kits, ref int skippedZips)
+    {
+        var root = SafePath.ForIo(folder);
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            return;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            {
+                if (RdIntake.IsZip(file))
+                    TakeZip(file, readZip, seenZips, kits, ref skippedZips);
+            }
+        }
+        catch
+        {
+            // Недоступная папка не должна срывать уже посчитанную проверку.
+        }
+    }
+
+    private static void TakeZip(string path, bool readZip, HashSet<string> seenZips, List<string> kits, ref int skippedZips)
+    {
+        var full = Path.GetFullPath(path);
+        if (!seenZips.Add(full))
+            return;
+        if (!readZip)
+        {
+            skippedZips++;
+            return;
+        }
+
+        try
+        {
+            kits.AddRange(RdIntake.ExpandZip(full));
+        }
+        catch
+        {
+            skippedZips++;
+        }
     }
 
     private sealed class ProgressClock(IProgress<CheckProgress>? progress, int total)

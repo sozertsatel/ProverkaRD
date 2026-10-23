@@ -321,7 +321,8 @@ public partial class MainWindow : Window
         var cancelled = false;
         try
         {
-            await Task.Run(() => FillRdBatch(paths, batch, progress, token), token);
+            var readZip = _settings.ReadZipArchives;
+            await Task.Run(() => FillRdBatch(paths, batch, progress, token, readZip), token);
             _model.CommitRd(batch.Folders, batch.Files);
             if (batch.EmptyFolder && batch.Files.Count == 0)
                 _model.MarkEmptyFolder("В папке нет комплектов РД (PDF или DOCX).");
@@ -345,7 +346,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static void FillRdBatch(IReadOnlyList<string> sources, RdLoadBatch batch, IProgress<CheckProgress> progress, CancellationToken cancellationToken)
+    private static void FillRdBatch(IReadOnlyList<string> sources, RdLoadBatch batch, IProgress<CheckProgress> progress, CancellationToken cancellationToken, bool readZip)
     {
         var files = new List<string>();
         foreach (var source in sources)
@@ -370,15 +371,19 @@ public partial class MainWindow : Window
                 }
 
                 foreach (var file in found)
-                    ConsiderRd(file, files);
+                    ConsiderRd(file, files, readZip);
                 if (files.Count == before)
                     batch.EmptyFolder = true;
             }
             else
             {
-                ConsiderRd(io, files);
+                ConsiderRd(io, files, readZip);
             }
         }
+
+        var unique = RdIntake.Deduplicate(files);
+        files.Clear();
+        files.AddRange(unique);
 
         if (batch.SawFolder && files.Count > 0)
             batch.EmptyFolder = false;
@@ -408,8 +413,25 @@ public partial class MainWindow : Window
         }
     }
 
-    private static void ConsiderRd(string path, List<string> files)
+    private static void ConsiderRd(string path, List<string> files, bool readZip)
     {
+        if (RdIntake.IsZip(path))
+        {
+            if (!readZip)
+                return;
+            try
+            {
+                foreach (var inner in RdIntake.ExpandZip(path))
+                    ConsiderRd(inner, files, readZip: false);
+            }
+            catch (Exception ex)
+            {
+                RunLog.Error("Чтение zip", ex);
+            }
+
+            return;
+        }
+
         var name = Path.GetFileName(path);
         if (name.StartsWith("~$", StringComparison.Ordinal) || name.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
             return;

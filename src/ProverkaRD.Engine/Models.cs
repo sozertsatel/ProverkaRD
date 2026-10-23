@@ -9,6 +9,9 @@ public sealed class CheckOptions
     public bool GroupDuplicateFindings { get; init; } = true;
     /// <summary>Ставка НДС в процентах. 22 — ставка РФ с 2026 года.</summary>
     public decimal VatPercent { get; init; } = 22m;
+
+    /// <summary>Читать PDF и DOCX внутри .zip. По умолчанию архив пропускается.</summary>
+    public bool ReadZipArchives { get; init; }
 }
 
 public sealed class CheckInput

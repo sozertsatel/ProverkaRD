@@ -20,6 +20,9 @@ public sealed class AppSettings
     /// <summary>Ставка НДС в процентах. 22 — ставка РФ с 2026 года. 0 — это 0%, а не «не задано».</summary>
     public decimal VatPercent { get; set; } = 22m;
 
+    /// <summary>Читать комплекты из .zip. По умолчанию выключено и так же читается из старого settings.json.</summary>
+    public bool ReadZipArchives { get; set; }
+
     public CheckOptions ToOptions() => new()
     {
         IgnoredSigners = IgnoredSigners
@@ -30,6 +33,7 @@ public sealed class AppSettings
         GroupSignerWarnings = GroupSignerWarnings,
         GroupDuplicateFindings = GroupDuplicateFindings,
         VatPercent = VatPercent,
+        ReadZipArchives = ReadZipArchives,
     };
 
     public static AppSettings Load()

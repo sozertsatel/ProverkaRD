@@ -148,7 +148,12 @@ public static partial class TextMatch
         if (!digitsA.SequenceEqual(digitsB))
             return Severity.Critical;
         if (wordsA.Count != wordsB.Count)
-            return Severity.Critical;
+        {
+            // «зданияи» и «здания и»: пропущенный пробел перед союзом «и» — оформление.
+            // Лишнее слово («Мост на ПК» и «Мост ПК») сюда не попадает.
+            if (!TryUnglueConjunction(wordsA, wordsB, out wordsA, out wordsB))
+                return Severity.Critical;
+        }
 
         var edits = 0;
         for (var i = 0; i < wordsA.Count; i++)
@@ -199,6 +204,60 @@ public static partial class TextMatch
 
         return new SpellingGap(leftBad, rightBad);
     }
+
+    /// <summary>
+    /// Слово, к которому приклеен союз «и», выравнивается с парой «слово» + «и».
+    /// </summary>
+    private static bool TryUnglueConjunction(List<string> left, List<string> right, out List<string> alignedLeft, out List<string> alignedRight)
+    {
+        alignedLeft = [];
+        alignedRight = [];
+        var i = 0;
+        var j = 0;
+        var unglued = false;
+        while (i < left.Count || j < right.Count)
+        {
+            if (i < left.Count && j < right.Count && left[i] == right[j])
+            {
+                alignedLeft.Add(left[i]);
+                alignedRight.Add(right[j]);
+                i++;
+                j++;
+                continue;
+            }
+
+            if (i < left.Count && j + 1 < right.Count && IsGluedAnd(left[i], right[j]) && right[j + 1] == "и")
+            {
+                alignedLeft.Add(right[j]);
+                alignedLeft.Add("и");
+                alignedRight.Add(right[j]);
+                alignedRight.Add("и");
+                i++;
+                j += 2;
+                unglued = true;
+                continue;
+            }
+
+            if (j < right.Count && i + 1 < left.Count && IsGluedAnd(right[j], left[i]) && left[i + 1] == "и")
+            {
+                alignedLeft.Add(left[i]);
+                alignedLeft.Add("и");
+                alignedRight.Add(left[i]);
+                alignedRight.Add("и");
+                j++;
+                i += 2;
+                unglued = true;
+                continue;
+            }
+
+            return false;
+        }
+
+        return unglued;
+    }
+
+    private static bool IsGluedAnd(string glued, string stem) =>
+        stem.Length >= 3 && glued.Length == stem.Length + 1 && glued == stem + "и";
 
     private static bool IsDeletionTypo(string candidate, string other)
     {

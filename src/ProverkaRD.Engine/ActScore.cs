@@ -40,7 +40,12 @@ public static class ActScore
                 severities.Add(kit.Overall);
         }
 
-        return new ActScoreResult(SeverityText.Worst(severities), critical, formatting, warnings);
+        var overall = SeverityText.Worst(severities);
+        // Итог элемента не бывает «Критично», если критичных замечаний нет:
+        // статус комплекта без замечания сюда не переносится.
+        if (overall == Severity.Critical && critical == 0)
+            overall = SeverityText.Worst(severities.Where(item => item != Severity.Critical));
+        return new ActScoreResult(overall, critical, formatting, warnings);
     }
 
     public static bool Concerns(ActResult act, Finding finding)

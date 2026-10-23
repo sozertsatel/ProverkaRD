@@ -11,6 +11,9 @@
     <StackPanel Margin="20" Spacing="12">
         <TextBlock Text="Замечания" FontSize="16" FontWeight="SemiBold"/>
         <CheckBox x:Name="GroupDuplicatesBox" Content="Объединять одинаковые замечания в одну строку"/>
+        <CheckBox x:Name="ReadZipBox" Content="Читать zip-архивы"/>
+        <TextBlock TextWrapping="Wrap" Foreground="#5C6B7A"
+                   Text="По умолчанию выключено: файл .zip не открывается. В сводке тогда есть строка «пропущено zip: N». Одинаковые PDF рядом и внутри архива всё равно читаются один раз, если чтение архива включено."/>
         <TextBlock TextWrapping="Wrap" Foreground="#5C6B7A"
                    Text="Игнорируемые подписанты не попадают в замечания о фамилии. По одному в строке. Сравнение по основе фамилии: «Павлову» и «Павлов» — один человек."/>
         <TextBox x:Name="IgnoredBox" AcceptsReturn="True" Height="120" TextWrapping="Wrap"/>
