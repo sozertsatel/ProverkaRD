@@ -53,7 +53,7 @@
                         <Image Width="44" Height="44" Source="avares://ProverkaRD/Assets/rd.png"/>
                     </Border>
                     <TextBlock x:Name="ProductTitle" Text="РД Контроль" FontSize="28" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="VersionText" Text="0.1.8" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="VersionText" Text="0.1.9" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Center"/>
                 </StackPanel>
                 <Button Grid.Column="1" Classes="onDark" Click="OnSettings" VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal" Spacing="8">
@@ -125,7 +125,12 @@
                                     <Button Classes="quiet" Content="Папка" Click="OnAddActFolder" IsEnabled="{Binding CanRun}"/>
                                     <Button Classes="quiet" Content="Очистить" Click="OnClearActs" IsEnabled="{Binding CanRun}"/>
                                 </StackPanel>
-                                <TextBlock Grid.Column="3" Text="{Binding ActCountText}" VerticalAlignment="Center" Foreground="#5C6B7A"/>
+                                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <ProgressBar Width="84" Height="6" Minimum="0" Maximum="{Binding ActLoadMaximum}"
+                                                 Value="{Binding ActLoadValue}" IsVisible="{Binding ActLoading}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ActCountText}" VerticalAlignment="Center" Foreground="#5C6B7A"/>
+                                    <Button Classes="quiet" Content="Отмена" Click="OnCancel" IsVisible="{Binding ActLoading}" Padding="6,0"/>
+                                </StackPanel>
                             </Grid>
                         </Border>
                         <Border Background="#F7F9FC" BorderBrush="#E2E7EE" BorderThickness="1" CornerRadius="8" Padding="10,6"
@@ -137,7 +142,12 @@
                                     <Button Classes="quiet" Content="Папка" Click="OnAddRdFolder" IsEnabled="{Binding CanRun}"/>
                                     <Button Classes="quiet" Content="Очистить" Click="OnClearRd" IsEnabled="{Binding CanRun}"/>
                                 </StackPanel>
-                                <TextBlock Grid.Column="3" Text="{Binding RdCountText}" VerticalAlignment="Center" Foreground="#5C6B7A"/>
+                                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <ProgressBar Width="84" Height="6" Minimum="0" Maximum="{Binding RdLoadMaximum}"
+                                                 Value="{Binding RdLoadValue}" IsVisible="{Binding RdLoading}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding RdCountText}" VerticalAlignment="Center" Foreground="#5C6B7A"/>
+                                    <Button Classes="quiet" Content="Отмена" Click="OnCancel" IsVisible="{Binding RdLoading}" Padding="6,0"/>
+                                </StackPanel>
                             </Grid>
                         </Border>
                         <TextBlock Text="{Binding OutlineSummary}" FontWeight="SemiBold" Foreground="#1F4E79" TextWrapping="Wrap"/>

@@ -79,8 +79,12 @@ public partial class MainWindow : Window
             await LoadRd(files);
     }
 
-    private async void OnAddActFiles(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
-        await AddFiles(_model.AddAct, "Акты сдачи-приёмки", true, "*.docx");
+    private async void OnAddActFiles(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var files = await PickFiles("Акты сдачи-приёмки", true, "*.docx");
+        if (files.Count > 0)
+            await LoadActs(files);
+    }
 
     private async void OnAddRdFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
@@ -93,7 +97,7 @@ public partial class MainWindow : Window
     {
         var folder = await PickFolder("Папка с актами");
         if (folder is not null)
-            _model.AddAct(folder);
+            await LoadActs([folder]);
     }
 
     private void OnCancel(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _work?.Cancel();
@@ -110,11 +114,13 @@ public partial class MainWindow : Window
             await LoadRd(paths);
     }
 
-    private void OnActDrop(object? sender, DragEventArgs e)
+    private async void OnActDrop(object? sender, DragEventArgs e)
     {
         if (_model.Busy)
             return;
-        DropInto(e, _model.AddAct);
+        var paths = DroppedPaths(e);
+        if (paths.Count > 0)
+            await LoadActs(paths);
     }
 
     private void OnExcelDragOver(object? sender, DragEventArgs e)
@@ -311,14 +317,13 @@ public partial class MainWindow : Window
         if (_model.Busy || paths.Count == 0)
             return;
         var token = BeginWork();
-        var generation = _model.BeginLoad();
+        var generation = _model.BeginRdLoad();
         var batch = new RdLoadBatch();
         var progress = new Progress<CheckProgress>(step =>
         {
             if (generation == _model.ProgressGeneration)
-                _model.ReportProgress(step);
+                _model.ReportRdLoad(generation, step.Done, step.Total);
         });
-        var cancelled = false;
         try
         {
             var readZip = _settings.ReadZipArchives;
@@ -329,7 +334,6 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) when (ex is OperationCanceledException || token.IsCancellationRequested)
         {
-            cancelled = true;
             _model.CommitRd(batch.Folders, batch.Files);
             _model.MarkCancelled("Загрузка остановлена. Уже добавленные файлы сохранены.");
         }
@@ -340,10 +344,91 @@ public partial class MainWindow : Window
         }
         finally
         {
+            _model.FinishRdLoad();
             _model.Busy = false;
-            if (!cancelled)
-                _model.HideProgress();
         }
+    }
+
+    private async Task LoadActs(IReadOnlyList<string> paths)
+    {
+        if (_model.Busy || paths.Count == 0)
+            return;
+        var token = BeginWork();
+        var generation = _model.BeginActLoad();
+        var cancelled = false;
+        try
+        {
+            var found = await Task.Run(() => CollectActs(paths, token), token);
+            var total = found.Count;
+            for (var index = 0; index < found.Count; index++)
+            {
+                token.ThrowIfCancellationRequested();
+                _model.ReportActLoad(generation, index + 1, total);
+                _model.AddAct(found[index]);
+            }
+
+            if (found.Count == 0 && paths.Any(path => Directory.Exists(SafePath.ForIo(path))))
+                _model.MarkEmptyFolder("В папке нет актов (DOCX).");
+        }
+        catch (Exception ex) when (ex is OperationCanceledException || token.IsCancellationRequested)
+        {
+            cancelled = true;
+            _model.MarkCancelled("Загрузка остановлена. Уже добавленные файлы сохранены.");
+        }
+        catch (Exception ex)
+        {
+            RunLog.Error("Загрузка актов", ex);
+            _model.Fail(ex.Message);
+        }
+        finally
+        {
+            _model.FinishActLoad();
+            _model.Busy = false;
+            if (cancelled)
+                _model.StatusText = "Отменено.";
+        }
+    }
+
+    private static List<string> CollectActs(IReadOnlyList<string> paths, CancellationToken cancellationToken)
+    {
+        var files = new List<string>();
+        foreach (var source in paths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(source))
+                continue;
+            var io = SafePath.ForIo(source);
+            if (Directory.Exists(io))
+            {
+                IEnumerable<string> found;
+                try
+                {
+                    found = Directory.EnumerateFiles(io, "*", SearchOption.AllDirectories);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+
+                foreach (var file in found)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (IsActFile(file))
+                        files.Add(file);
+                }
+            }
+            else if (IsActFile(io))
+                files.Add(io);
+        }
+
+        return files;
+    }
+
+    private static bool IsActFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        return !name.StartsWith("~$", StringComparison.Ordinal)
+               && name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void FillRdBatch(IReadOnlyList<string> sources, RdLoadBatch batch, IProgress<CheckProgress> progress, CancellationToken cancellationToken, bool readZip)
@@ -499,12 +584,6 @@ public partial class MainWindow : Window
         return files.FirstOrDefault();
     }
 
-    private async Task AddFiles(Action<string> add, string title, bool multiple, params string[] patterns)
-    {
-        foreach (var file in await PickFiles(title, multiple, patterns))
-            add(file);
-    }
-
     private async Task<IReadOnlyList<string>> PickFiles(string title, bool multiple, params string[] patterns)
     {
         var top = TopLevel.GetTopLevel(this);
@@ -537,19 +616,6 @@ public partial class MainWindow : Window
         await new SettingsWindow(_settings).ShowDialog(this);
         _settings = AppSettings.Load();
         _model.Options = _settings.ToOptions();
-    }
-
-    private static void DropInto(DragEventArgs e, Action<string> add)
-    {
-        var files = e.DataTransfer.TryGetFiles();
-        if (files is null)
-            return;
-        foreach (var file in files)
-        {
-            var path = file.TryGetLocalPath();
-            if (path is not null)
-                add(path);
-        }
     }
 
     private void DropWorkbook(DragEventArgs e, Action<string> set, string title)
@@ -638,6 +704,14 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     private string _progressText = "";
     private bool _showProgress;
     private int _progressGeneration;
+    private bool _rdLoading;
+    private int _rdLoadDone;
+    private int _rdLoadTotal;
+    private bool _rdLoaded;
+    private bool _actLoading;
+    private int _actLoadDone;
+    private int _actLoadTotal;
+    private bool _actLoaded;
     private readonly System.Diagnostics.Stopwatch _elapsedClock = new();
     private CheckReport? _report;
     private ActResult? _selectedAct;
@@ -679,8 +753,22 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     public ObservableCollection<InputNode> InputNodes { get; } = [];
     public string OutlineSummary => _outlineSummary;
     public bool OutlineEmpty => InputNodes.Count == 0;
-    public string ActCountText => InputOutline.CountPhrase(ActFiles.Count, "файл", "файла", "файлов");
-    public string RdCountText => InputOutline.CountPhrase(RdFiles.Count, "файл", "файла", "файлов");
+    public bool ActLoading => _actLoading;
+    public bool RdLoading => _rdLoading;
+    public double ActLoadMaximum => Math.Max(1, _actLoadTotal);
+    public double RdLoadMaximum => Math.Max(1, _rdLoadTotal);
+    public double ActLoadValue => _actLoadDone;
+    public double RdLoadValue => _rdLoadDone;
+    public string ActCountText => LoadCountText(_actLoading, _actLoadDone, _actLoadTotal, _actLoaded, ActFiles.Count);
+    public string RdCountText => LoadCountText(_rdLoading, _rdLoadDone, _rdLoadTotal, _rdLoaded, RdFiles.Count);
+
+    private static string LoadCountText(bool loading, int done, int total, bool loaded, int count)
+    {
+        if (loading)
+            return total <= 0 ? "загрузка…" : "загрузка " + done + " из " + total;
+        var phrase = InputOutline.CountPhrase(count, "файл", "файла", "файлов");
+        return loaded && count > 0 ? phrase + " ✓" : phrase;
+    }
 
     public string? VerdPath
     {
@@ -821,20 +909,72 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
             Raise(nameof(ElapsedText));
     }
 
-    public int BeginLoad()
+    public int BeginRdLoad()
     {
         _progressGeneration++;
         Busy = true;
-        _showProgress = true;
-        _progressValue = 0;
-        _progressText = "Загрузка комплектов";
-        _elapsedClock.Restart();
-        SetState("checking", "Загрузка комплектов", "");
-        Raise(nameof(ShowProgress));
-        Raise(nameof(ProgressValue));
-        Raise(nameof(ProgressText));
-        Raise(nameof(ElapsedText));
+        _rdLoading = true;
+        _rdLoadDone = 0;
+        _rdLoadTotal = 0;
+        Raise(nameof(RdLoading));
+        Raise(nameof(RdCountText));
+        Raise(nameof(RdLoadMaximum));
+        Raise(nameof(RdLoadValue));
         return _progressGeneration;
+    }
+
+    public void ReportRdLoad(int generation, int done, int total)
+    {
+        if (generation != _progressGeneration)
+            return;
+        _rdLoadDone = done;
+        _rdLoadTotal = total;
+        Raise(nameof(RdCountText));
+        Raise(nameof(RdLoadMaximum));
+        Raise(nameof(RdLoadValue));
+    }
+
+    public void FinishRdLoad()
+    {
+        _rdLoading = false;
+        _rdLoaded = RdFiles.Count > 0;
+        Raise(nameof(RdLoading));
+        Raise(nameof(RdCountText));
+        Raise(nameof(RdLoadValue));
+    }
+
+    public int BeginActLoad()
+    {
+        _progressGeneration++;
+        Busy = true;
+        _actLoading = true;
+        _actLoadDone = 0;
+        _actLoadTotal = 0;
+        Raise(nameof(ActLoading));
+        Raise(nameof(ActCountText));
+        Raise(nameof(ActLoadMaximum));
+        Raise(nameof(ActLoadValue));
+        return _progressGeneration;
+    }
+
+    public void ReportActLoad(int generation, int done, int total)
+    {
+        if (generation != _progressGeneration)
+            return;
+        _actLoadDone = done;
+        _actLoadTotal = total;
+        Raise(nameof(ActCountText));
+        Raise(nameof(ActLoadMaximum));
+        Raise(nameof(ActLoadValue));
+    }
+
+    public void FinishActLoad()
+    {
+        _actLoading = false;
+        _actLoaded = ActFiles.Count > 0;
+        Raise(nameof(ActLoading));
+        Raise(nameof(ActCountText));
+        Raise(nameof(ActLoadValue));
     }
 
     public int BeginCheck()
@@ -843,13 +983,13 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         Busy = true;
         _showProgress = true;
         _progressValue = 0;
-        _progressText = "Подготовка списка файлов.";
+        _progressText = CheckProgressText.StageHeading(CheckStages.LoadKits);
         _hasResult = false;
         _elapsedClock.Restart();
         Raise(nameof(HasResult));
         Raise(nameof(ShowCounters));
         Raise(nameof(ResultLine));
-        SetState("checking", "Идёт проверка", "");
+        SetState("checking", "Проведение проверки", "");
         Raise(nameof(ShowProgress));
         Raise(nameof(ProgressValue));
         Raise(nameof(ProgressText));
@@ -861,9 +1001,8 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     {
         _showProgress = true;
         _progressValue = double.IsFinite(step.Overall) ? Math.Clamp(step.Overall, 0, 1) : 0;
-        _progressText = step.Text;
-        var title = step.Stage == CheckStages.LoadKits ? "Загрузка комплектов" : "Идёт проверка";
-        SetState("checking", title, "");
+        _progressText = CheckProgressText.StageHeading(step.Stage);
+        SetState("checking", "Проведение проверки", "");
         Raise(nameof(ShowProgress));
         Raise(nameof(ProgressValue));
         Raise(nameof(ProgressText));
@@ -950,14 +1089,18 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     public void ClearRd()
     {
         _hiddenOutline.Clear();
+        _rdLoaded = false;
         RdFolders.Clear();
         Quiet(() => RdFiles.Clear());
+        Raise(nameof(RdCountText));
         RefreshOutlineNow();
     }
 
     public void ClearActs()
     {
+        _actLoaded = false;
         Quiet(() => ActFiles.Clear());
+        Raise(nameof(ActCountText));
         RefreshOutlineNow();
     }
 

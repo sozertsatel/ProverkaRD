@@ -128,6 +128,8 @@ public sealed class VerdBook
     public List<LedgerRowIssue> RowIssues { get; } = [];
     /// <summary>Текст шапки листа до строки столбцов и сама строка столбцов, чтобы найти «Этап N».</summary>
     public string HeaderText { get; set; } = "";
+    /// <summary>Имя листа, с которого прочитана ведомость.</summary>
+    public string SheetName { get; set; } = "";
 }
 
 public sealed class VesrRow
@@ -295,7 +297,7 @@ public sealed class LedgerRowIssue
     public string Reason { get; init; } = "";
 }
 
-/// <summary>Одна строка листа «Опись комплекта»: один PDF.</summary>
+/// <summary>Одна строка листа «Опись комплекта»: комплект PDF или посторонний файл.</summary>
 public sealed class RegistryRow
 {
     public string FileName { get; init; } = "";
@@ -341,6 +343,20 @@ public static class CheckProgressText
         return stage;
     }
 
+    /// <summary>Верхняя полоса проверки: номер этапа среди четырёх, без имени файла.</summary>
+    public static string StageHeading(string stage)
+    {
+        var index = stage switch
+        {
+            CheckStages.LoadKits => 1,
+            CheckStages.Signatures => 2,
+            CheckStages.Ledgers => 3,
+            CheckStages.Report => 4,
+            _ => 0,
+        };
+        return index == 0 ? stage : "Этап " + index + " из 4: " + stage;
+    }
+
     public static string Elapsed(TimeSpan elapsed)
     {
         if (elapsed < TimeSpan.Zero)
@@ -376,6 +392,8 @@ public sealed class CheckReport
     public int LockedFiles { get; set; }
     /// <summary>Номер этапа. Пусто — в имени файла и в шапке «Сводки» этапа нет.</summary>
     public string Stage { get; set; } = "";
+    /// <summary>ВЭРД прочитана не с листа «База». Пусто, если лист «База» или ведомости нет.</summary>
+    public string VerdSheetNote { get; set; } = "";
 }
 
 /// <summary>Сколько файлов увидено при загрузке и как они разошлись с актами.</summary>

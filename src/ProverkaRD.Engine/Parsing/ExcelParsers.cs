@@ -15,10 +15,11 @@ public static partial class VerdParser
             using var wb = new XLWorkbook(stream);
             var named = wb.Worksheets.FirstOrDefault(w =>
                 w.Name.Contains("База", StringComparison.OrdinalIgnoreCase));
+            var sheet = named ?? wb.Worksheets.First();
+            book.SheetName = sheet.Name;
             if (named is null)
                 book.Notices.Add(new Notice("ВЭРД", SafePath.FileName(path),
-                    "Лист «База» не найден. Читается лист «" + wb.Worksheets.First().Name + "»."));
-            var sheet = named ?? wb.Worksheets.First();
+                    "Лист «База» не найден, читается «" + sheet.Name + "»."));
             var header = FindHeader(sheet);
             book.HeaderText = Preamble(sheet, header?.Row ?? 0);
             if (header is null)

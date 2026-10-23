@@ -150,7 +150,8 @@ public static partial class TextMatch
         if (wordsA.Count != wordsB.Count)
         {
             // «зданияи» и «здания и»: пропущенный пробел перед союзом «и» — оформление.
-            // Лишнее слово («Мост на ПК» и «Мост ПК») сюда не попадает.
+            // Лишнее или пропущенное слово, в том числе короткое «на», — критично.
+            // Нормализация это слово не выбрасывает.
             if (!TryUnglueConjunction(wordsA, wordsB, out wordsA, out wordsB))
                 return Severity.Critical;
         }

@@ -13,6 +13,10 @@ public class CheckProgressTests
             CheckProgressText.Format(CheckStages.Signatures, 12, 54, "том.pdf"));
         Assert.Equal("Сверка с ВЭРД/ВЭСР", CheckProgressText.Format(CheckStages.Ledgers, 1, 3, "ведомость.xlsx"));
         Assert.Equal("Формирование отчёта", CheckProgressText.Format(CheckStages.Report, 1, 1, ""));
+        Assert.Equal("Этап 1 из 4: Загрузка комплектов", CheckProgressText.StageHeading(CheckStages.LoadKits));
+        Assert.Equal("Этап 2 из 4: Проверка подписей", CheckProgressText.StageHeading(CheckStages.Signatures));
+        Assert.Equal("Этап 3 из 4: Сверка с ВЭРД/ВЭСР", CheckProgressText.StageHeading(CheckStages.Ledgers));
+        Assert.Equal("Этап 4 из 4: Формирование отчёта", CheckProgressText.StageHeading(CheckStages.Report));
         Assert.Equal("прошло 0:00", CheckProgressText.Elapsed(TimeSpan.Zero));
         Assert.Equal("прошло 0:42", CheckProgressText.Elapsed(TimeSpan.FromSeconds(42)));
         Assert.Equal("прошло 1:05", CheckProgressText.Elapsed(TimeSpan.FromSeconds(65)));

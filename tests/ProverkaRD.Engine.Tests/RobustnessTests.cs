@@ -180,7 +180,7 @@ public class RobustnessTests
                 Assert.Equal(SeverityPalette.FontName, sheet.Style.Font.FontName);
 
             var summary = book.Worksheet("Сводка");
-            Assert.Equal(ProductBrand.Name + ". Проверка рабочей документации, версия 0.1.0", summary.Cell(1, 1).GetString());
+            Assert.Equal(ProductBrand.Name + ". Проверка рабочей документации. Этап 4, версия 0.1.0", summary.Cell(1, 1).GetString());
             Assert.Equal(ProductBrand.Name, summary.PageSetup.Footer.Left.GetText(XLHFOccurrence.OddPages));
             Assert.Equal("версия 0.1.0", summary.PageSetup.Footer.Right.GetText(XLHFOccurrence.OddPages));
             Assert.Equal("Элемент", summary.Cell(5, 1).GetString());
