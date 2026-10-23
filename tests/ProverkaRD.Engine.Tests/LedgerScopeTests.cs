@@ -156,35 +156,92 @@ public class LedgerScopeTests
             var report = new CheckReport();
             report.Registry.Add(new RegistryRow
             {
+                Element = "7.127",
+                Cipher = "000-00-0000-А-Я",
+                Name = "Поздний",
+                FileName = "127.pdf",
+                SignatureName = "нет",
+                SignatureStatus = Severity.Critical,
+                HasSignature = false,
+            });
+            report.Registry.Add(new RegistryRow
+            {
                 Element = "7.29",
-                Cipher = "000-00-0000-А-НС1",
-                Name = "Насосная",
-                FileName = "том.pdf",
-                SignatureName = "том.pdf.sig",
+                Cipher = "000-00-0000-А-Я",
+                Name = "Вторая",
+                FileName = "я.pdf",
+                SignatureName = "я.pdf.sig",
+                SignatureStatus = Severity.Formatting,
+                CertStatus = Severity.Critical,
                 HasSignature = true,
                 Signers = "Фролов Иван",
             });
             report.Registry.Add(new RegistryRow
             {
-                Element = "7.30",
-                Cipher = "000-00-0000-А-НС2",
-                Name = "Без подписи",
-                FileName = "пусто.pdf",
-                SignatureName = "нет",
+                Element = "7.29",
+                Cipher = "000-00-0000-А-А",
+                Name = "Насосная",
+                FileName = "а.pdf",
+                SignatureName = "а.pdf.sig",
+                SignatureStatus = Severity.Ok,
+                HasSignature = true,
+            });
+            report.Registry.Add(new RegistryRow
+            {
+                Element = "7.107",
+                Cipher = "000-00-0000-А-К",
+                Name = "Средний",
+                FileName = "107.pdf",
+                SignatureName = "107.pdf.sig",
+                SignatureStatus = Severity.Ok,
+                HasSignature = true,
+            });
+            report.Registry.Add(new RegistryRow
+            {
+                Element = "7.31",
+                Cipher = "000-00-0000-А-М",
+                Name = "Следующий",
+                FileName = "31.pdf",
+                SignatureStatus = Severity.Formatting,
                 HasSignature = false,
             });
+            report.Registry.Add(new RegistryRow
+            {
+                Foreign = true,
+                Element = "1.1",
+                Cipher = "",
+                Name = "Письмо",
+                FileName = "письмо.pdf",
+                SignatureName = "письмо.pdf.sig",
+                SignatureStatus = Severity.Warning,
+                HasSignature = true,
+            });
             var path = Path.Combine(dir.FullName, "report.xlsx");
-            ReportWriter.Write(report, path, "0.1.5");
+            ReportWriter.Write(report, path, "0.1.7");
             using var book = new XLWorkbook(path);
-            var sheet = book.Worksheet("Реестр комплекта");
+            var sheet = book.Worksheet("Опись комплекта");
             Assert.Equal("№ п/п", sheet.Cell(4, 1).GetString());
-            Assert.Equal("Подписанты", sheet.Cell(4, 7).GetString());
+            Assert.Equal("Статус подписи", sheet.Cell(4, 8).GetString());
             Assert.DoesNotContain(
-                Enumerable.Range(1, 7).Select(col => sheet.Cell(4, col).GetString()),
+                Enumerable.Range(1, 8).Select(col => sheet.Cell(4, col).GetString()),
                 header => header is "Сертификат" or "Итог");
-            Assert.Equal("Итого", sheet.Cell(7, 1).GetString());
-            Assert.Equal("Комплектов: 2", sheet.Cell(7, 5).GetString());
-            Assert.Equal("Подписано: 1", sheet.Cell(7, 6).GetString());
+            Assert.Equal("7.29", sheet.Cell(5, 2).GetString());
+            Assert.Equal("000-00-0000-А-А", sheet.Cell(5, 3).GetString());
+            Assert.Equal(1d, sheet.Cell(5, 1).GetDouble());
+            Assert.Equal("ОК", sheet.Cell(5, 8).GetString());
+            Assert.Equal("7.29", sheet.Cell(6, 2).GetString());
+            Assert.Equal("000-00-0000-А-Я", sheet.Cell(6, 3).GetString());
+            Assert.Equal("Критично", sheet.Cell(6, 8).GetString());
+            Assert.Equal("7.31", sheet.Cell(7, 2).GetString());
+            Assert.Equal("Оформление", sheet.Cell(7, 8).GetString());
+            Assert.Equal("7.107", sheet.Cell(8, 2).GetString());
+            Assert.Equal("7.127", sheet.Cell(9, 2).GetString());
+            Assert.Equal(5d, sheet.Cell(9, 1).GetDouble());
+            Assert.Equal("Комплектов: 5 | Подписано: 3 | Посторонних файлов: 1", sheet.Cell(10, 1).GetString());
+            Assert.Equal("Посторонние файлы", sheet.Cell(11, 1).GetString());
+            Assert.Equal("", sheet.Cell(12, 1).GetString());
+            Assert.Equal("письмо.pdf", sheet.Cell(12, 5).GetString());
+            Assert.Equal("Предупреждение", sheet.Cell(12, 8).GetString());
             Assert.Equal(1, sheet.PageSetup.PagesWide);
             using var zip = System.IO.Compression.ZipFile.OpenRead(path);
             var workbook = zip.GetEntry("xl/workbook.xml");
@@ -192,7 +249,7 @@ public class LedgerScopeTests
             using var reader = new StreamReader(workbook.Open());
             var xml = reader.ReadToEnd();
             Assert.Contains("_xlnm.Print_Titles", xml);
-            Assert.Contains("'Реестр комплекта'!4:4", xml);
+            Assert.Contains("'Опись комплекта'!4:4", xml);
         }
         finally
         {

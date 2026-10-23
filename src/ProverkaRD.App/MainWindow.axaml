@@ -53,7 +53,7 @@
                         <Image Width="44" Height="44" Source="avares://ProverkaRD/Assets/rd.png"/>
                     </Border>
                     <TextBlock x:Name="ProductTitle" Text="РД Контроль" FontSize="28" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="VersionText" Text="0.1.6" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="VersionText" Text="0.1.7" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Center"/>
                 </StackPanel>
                 <Button Grid.Column="1" Classes="onDark" Click="OnSettings" VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal" Spacing="8">

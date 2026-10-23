@@ -288,7 +288,7 @@ public sealed class LedgerRowIssue
     public string Reason { get; init; } = "";
 }
 
-/// <summary>Одна строка листа «Реестр комплекта»: один PDF.</summary>
+/// <summary>Одна строка листа «Опись комплекта»: один PDF.</summary>
 public sealed class RegistryRow
 {
     public string FileName { get; init; } = "";
@@ -303,6 +303,10 @@ public sealed class RegistryRow
     public string Name { get; init; } = "";
     public string SignatureName { get; init; } = "нет";
     public bool HasSignature { get; init; }
+    /// <summary>Письмо или PDF без шифра. В описи ниже итога, без номера.</summary>
+    public bool Foreign { get; init; }
+
+    public Severity SignatureColumn => SeverityText.Worst(SignatureStatus, CertStatus);
 }
 
 public readonly record struct CheckProgress(int Done, int Total, string FileName);

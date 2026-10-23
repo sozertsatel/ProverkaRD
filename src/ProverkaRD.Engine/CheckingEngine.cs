@@ -930,6 +930,7 @@ public sealed partial class CheckingEngine
                 CertStatus = Severity.Ok,
                 SignatureStatus = Severity.Warning,
                 Overall = Severity.Warning,
+                Foreign = true,
             };
         }
 

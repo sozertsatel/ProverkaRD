@@ -359,17 +359,17 @@ public static class ReportWriter
 
     private static void WriteRegistry(XLWorkbook workbook, CheckReport report, string? appVersion)
     {
-        var sheet = workbook.AddWorksheet("Реестр комплекта");
+        var sheet = workbook.AddWorksheet("Опись комплекта");
         UseFont(sheet);
         var headers = new[]
         {
-            "№ п/п", "Элемент", "Шифр комплекта", "Наименование", "Файл PDF", "Подпись (.sig)", "Подписанты",
+            "№ п/п", "Элемент", "Шифр комплекта", "Наименование", "Файл PDF", "Подпись (.sig)", "Подписанты", "Статус подписи",
         };
         sheet.Cell(1, 1).Value = Titled("Опись комплекта", appVersion);
         sheet.Cell(1, 1).Style.Font.Bold = true;
         sheet.Cell(1, 1).Style.Font.FontSize = 16;
         sheet.Range(1, 1, 1, headers.Length).Merge();
-        sheet.Cell(2, 1).Value = "Опись PDF. Одна строка — один комплект. Внизу — сколько комплектов и сколько из них с подписью.";
+        sheet.Cell(2, 1).Value = "Опись PDF. Номер и итог — только у комплектов. Посторонние файлы ниже итога, без номера. Статус подписи — по подписи и сертификату.";
         sheet.Range(2, 1, 2, headers.Length).Merge();
         sheet.Cell(2, 1).Style.Alignment.WrapText = true;
         sheet.Row(2).Height = 32;
@@ -379,27 +379,48 @@ public static class ReportWriter
             sheet.Cell(headerRow, i + 1).Value = headers[i];
         StyleHeader(sheet.Range(headerRow, 1, headerRow, headers.Length));
 
+        var sets = report.Registry
+            .Where(item => !item.Foreign)
+            .OrderBy(item => item.Element, Comparer<string>.Create(ElementOrder.Compare))
+            .ThenBy(item => item.Cipher, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(item => item.FileName, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        var foreign = report.Registry
+            .Where(item => item.Foreign)
+            .OrderBy(item => item.FileName, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
         var row = headerRow + 1;
         var number = 1;
-        foreach (var item in report.Registry)
+        foreach (var item in sets)
         {
-            sheet.Cell(row, 1).Value = number++;
-            sheet.Cell(row, 2).Value = item.Element;
-            sheet.Cell(row, 3).Value = item.Cipher;
-            sheet.Cell(row, 4).Value = item.Name;
-            sheet.Cell(row, 5).Value = item.FileName;
-            sheet.Cell(row, 6).Value = item.SignatureName;
-            sheet.Cell(row, 7).Value = item.Signers;
+            WriteRegistryRow(sheet, row, item, number++);
             row++;
         }
 
-        var signed = report.Registry.Count(item => item.HasSignature);
-        sheet.Cell(row, 1).Value = "Итого";
-        sheet.Range(row, 1, row, 4).Merge();
-        sheet.Cell(row, 5).Value = "Комплектов: " + report.Registry.Count;
-        sheet.Cell(row, 6).Value = "Подписано: " + signed;
+        var signed = sets.Count(item => item.HasSignature);
+        sheet.Cell(row, 1).Value = "Комплектов: " + sets.Count
+            + " | Подписано: " + signed
+            + " | Посторонних файлов: " + foreign.Count;
+        sheet.Range(row, 1, row, headers.Length).Merge();
         sheet.Range(row, 1, row, headers.Length).Style.Font.Bold = true;
         var totalRow = row;
+        row++;
+
+        var foreignStart = 0;
+        if (foreign.Count > 0)
+        {
+            sheet.Cell(row, 1).Value = "Посторонние файлы";
+            sheet.Range(row, 1, row, headers.Length).Merge();
+            sheet.Cell(row, 1).Style.Font.Bold = true;
+            foreignStart = row;
+            row++;
+            foreach (var item in foreign)
+            {
+                WriteRegistryRow(sheet, row, item, null);
+                row++;
+            }
+        }
 
         sheet.PageSetup.PageOrientation = XLPageOrientation.Landscape;
         sheet.PageSetup.PagesWide = 1;
@@ -407,16 +428,33 @@ public static class ReportWriter
         sheet.SheetView.FreezeRows(headerRow);
         sheet.PageSetup.FitToPages(1, 0);
         Widths(sheet, headers.Length);
-        sheet.Column(1).Width = 10;
+        sheet.Column(1).Width = 12;
         sheet.Column(2).Width = 28;
         sheet.Column(3).Width = 36;
         sheet.Column(4).Width = 42;
         sheet.Column(5).Width = 42;
         sheet.Column(6).Width = 28;
         sheet.Column(7).Width = 36;
-        if (row > headerRow + 1)
-            sheet.Rows(headerRow + 1, totalRow).Style.Alignment.WrapText = true;
+        sheet.Column(8).Width = 20;
+        var lastData = Math.Max(totalRow, row - 1);
+        if (lastData > headerRow)
+            sheet.Rows(headerRow + 1, lastData).Style.Alignment.WrapText = true;
         Outline(sheet, headerRow, 1, totalRow, headers.Length);
+        if (foreignStart > 0)
+            Outline(sheet, foreignStart, 1, row - 1, headers.Length);
+    }
+
+    private static void WriteRegistryRow(IXLWorksheet sheet, int row, RegistryRow item, int? number)
+    {
+        if (number is not null)
+            sheet.Cell(row, 1).Value = number.Value;
+        sheet.Cell(row, 2).Value = item.Element;
+        sheet.Cell(row, 3).Value = item.Cipher;
+        sheet.Cell(row, 4).Value = item.Name;
+        sheet.Cell(row, 5).Value = item.FileName;
+        sheet.Cell(row, 6).Value = item.SignatureName;
+        sheet.Cell(row, 7).Value = item.Signers;
+        Status(sheet.Cell(row, 8), item.SignatureColumn);
     }
 
     private static string Titled(string title, string? version)

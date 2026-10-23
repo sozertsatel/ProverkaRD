@@ -247,6 +247,7 @@ public class StampAndSignatureTests
             Assert.DoesNotContain(report.Findings, finding => finding.CheckName == "Электронная подпись");
             Assert.DoesNotContain(report.Findings, finding => finding.CheckName == "Фамилия без подписи");
             var row = Assert.Single(report.Registry);
+            Assert.True(row.Foreign);
             Assert.Equal(Severity.Warning, row.SignatureStatus);
             Assert.Equal(Severity.Warning, row.Overall);
             Assert.NotEqual(Severity.Critical, row.CertStatus);
@@ -257,10 +258,12 @@ public class StampAndSignatureTests
             var summary = book.Worksheet("Сводка");
             Assert.Contains("Предупреждения: 1", summary.Cell(2, 1).GetString());
             Assert.Equal(1d, summary.Cell(6, 5).GetDouble());
-            var opis = book.Worksheet("Реестр комплекта");
+            var opis = book.Worksheet("Опись комплекта");
             Assert.Equal("Файл PDF", opis.Cell(4, 5).GetString());
-            Assert.Equal("Письмо.pdf", opis.Cell(5, 5).GetString());
-            Assert.Contains("Комплектов: 1", opis.Cell(6, 5).GetString());
+            Assert.Equal("Комплектов: 0 | Подписано: 0 | Посторонних файлов: 1", opis.Cell(5, 1).GetString());
+            Assert.Equal("Посторонние файлы", opis.Cell(6, 1).GetString());
+            Assert.Equal("", opis.Cell(7, 1).GetString());
+            Assert.Equal("Письмо.pdf", opis.Cell(7, 5).GetString());
         }
         finally
         {
@@ -382,6 +385,7 @@ public class StampAndSignatureTests
 
             var report = new CheckingEngine().Run(new CheckInput { RdPaths = [path] });
             var row = Assert.Single(report.Registry);
+            Assert.False(row.Foreign);
             Assert.Equal("100-20-3000-А-КЖ1.pdf", row.FileName);
             Assert.Contains("100-20-3000-А-КЖ1", row.Cipher, StringComparison.Ordinal);
             Assert.Contains("4.10", row.Element, StringComparison.Ordinal);
@@ -411,7 +415,7 @@ public class StampAndSignatureTests
             var reportPath = Path.Combine(dir.FullName, "report.xlsx");
             ReportWriter.Write(report, reportPath, "0.1.1");
             using var book = new XLWorkbook(reportPath);
-            var sheet = book.Worksheet("Реестр комплекта");
+            var sheet = book.Worksheet("Опись комплекта");
             Assert.Equal(SeverityPalette.FontName, sheet.Style.Font.FontName);
             Assert.Contains("Опись комплекта", sheet.Cell(1, 1).GetString());
             Assert.Equal("№ п/п", sheet.Cell(4, 1).GetString());
@@ -421,22 +425,31 @@ public class StampAndSignatureTests
             Assert.Equal("Файл PDF", sheet.Cell(4, 5).GetString());
             Assert.Equal("Подпись (.sig)", sheet.Cell(4, 6).GetString());
             Assert.Equal("Подписанты", sheet.Cell(4, 7).GetString());
+            Assert.Equal("Статус подписи", sheet.Cell(4, 8).GetString());
             Assert.Equal(4, sheet.SheetView.SplitRow);
             Assert.Equal(1, sheet.PageSetup.PagesWide);
             Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(4, 1).Style.Border.TopBorder);
-            Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(4, 7).Style.Border.RightBorder);
+            Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(4, 8).Style.Border.RightBorder);
+            Assert.Equal(1d, sheet.Cell(5, 1).GetDouble());
             Assert.Equal("100-20-3000-А-КЖ1.pdf", sheet.Cell(5, 5).GetString());
             Assert.Contains("Фролов", sheet.Cell(5, 7).GetString(), StringComparison.Ordinal);
             Assert.Contains("Иван", sheet.Cell(5, 7).GetString(), StringComparison.Ordinal);
-            Assert.Contains("Комплектов: 1", sheet.Cell(6, 5).GetString());
-            Assert.Contains("Подписано: 1", sheet.Cell(6, 6).GetString());
+            Assert.Equal("ОК", sheet.Cell(5, 8).GetString());
+            Assert.Equal(SeverityPalette.Ok, HtmlColor(sheet.Cell(5, 8)));
+            Assert.Equal("Комплектов: 1 | Подписано: 1 | Посторонних файлов: 0", sheet.Cell(6, 1).GetString());
             Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(5, 1).Style.Border.LeftBorder);
-            Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(5, 7).Style.Border.RightBorder);
+            Assert.Equal(XLBorderStyleValues.Thick, sheet.Cell(5, 8).Style.Border.RightBorder);
         }
         finally
         {
             dir.Delete(recursive: true);
         }
+    }
+
+    private static string HtmlColor(IXLCell cell)
+    {
+        var rgb = cell.Style.Fill.BackgroundColor.Color;
+        return $"#{rgb.R:X2}{rgb.G:X2}{rgb.B:X2}";
     }
 
     private static void WriteStampPdf(string path, (int Row, string Role, string Surname)[] rows, IReadOnlyList<string> title)
