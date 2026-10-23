@@ -1,0 +1,8 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ProverkaRD.CheckCell"
+             x:Name="Root">
+    <Border x:Name="MarkBox" Padding="8,2" CornerRadius="4" HorizontalAlignment="Stretch">
+        <TextBlock x:Name="MarkText" HorizontalAlignment="Center" FontWeight="SemiBold"/>
+    </Border>
+</UserControl>

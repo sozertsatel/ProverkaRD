@@ -40,6 +40,7 @@ public static partial class ActParser
                 }
             }
 
+            var unrecognized = 0;
             foreach (var table in body.Elements<Table>())
             {
                 var rows = ReadRows(table);
@@ -58,8 +59,14 @@ public static partial class ActParser
                 }
                 else if (flat.Any(ch => !char.IsWhiteSpace(ch)))
                 {
-                    notices.Add(new Notice("Акт", SafePath.FileName(path), "Таблица не разобрана и не попала ни в комплекты, ни в стоимость."));
+                    unrecognized++;
                 }
+            }
+
+            // Подпись и служебные таблицы акта не шумят, если комплекты и стоимость уже прочитаны.
+            if ((kits.Count == 0 || costs.Count == 0) && unrecognized > 0)
+            {
+                notices.Add(new Notice("Акт", SafePath.FileName(path), "Таблица не разобрана и не попала ни в комплекты, ни в стоимость."));
             }
         }
         catch (Exception ex)

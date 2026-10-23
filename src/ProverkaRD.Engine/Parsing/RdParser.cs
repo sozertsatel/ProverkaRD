@@ -24,6 +24,10 @@ public static partial class RdParser
         "канализация", "электрика", "электроснабжение", "автоматизация", "архитектура", "конструктив",
         "пояснительная", "записка", "гип", "нормоконтроль", "отдел", "группа", "утвердил", "утвердил",
         "исполнил", "руководитель", "заказчика", "подрядчика", "котельная",
+        "детали", "соединительные", "все", "рабочие", "проектируемый", "проектируемая", "проектируемых",
+        "обозначение", "организация", "сооружение", "сооружения", "здание", "здания", "площадка",
+        "примечание", "чертежи", "содержание", "схема", "схемы", "план", "разрез", "узел", "узлы",
+        "сечение", "подлинник", "копии", "взамен",
     };
 
     private static readonly string[] RoleMarkers =
@@ -41,11 +45,13 @@ public static partial class RdParser
         string titleText = "";
         string fullText = "";
         List<string> surnames = [];
+        List<string> coordinateBare = [];
+        List<string> adjectiveBare = [];
         try
         {
             var ext = Path.GetExtension(path);
             if (ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
-                (titleText, fullText, surnames) = ReadPdf(path);
+                (titleText, fullText, surnames, coordinateBare, adjectiveBare) = ReadPdf(path);
             else if (ext.Equals(".docx", StringComparison.OrdinalIgnoreCase))
             {
                 titleText = fullText = ReadDocx(path);
@@ -62,6 +68,7 @@ public static partial class RdParser
         var title = ExtractTitle(titleText);
         if (title.Cipher is null)
             title = ExtractTitle(fullText);
+        var stray = string.IsNullOrWhiteSpace(cipherFromName) && string.IsNullOrWhiteSpace(title.Cipher);
         string? signaturePath = null;
         IReadOnlyList<string> signers = [];
         IReadOnlyList<CertificateSigner> certificateSigners = [];
@@ -73,6 +80,8 @@ public static partial class RdParser
         var signatureRejected = false;
         string? rejectedSignatureName = null;
         string? coveringSignatureName = null;
+        if (!stray)
+        {
         try
         {
             var located = SignatureParser.Locate(path);
@@ -100,7 +109,9 @@ public static partial class RdParser
         {
             signatureError = ex.Message;
         }
+        }
 
+        surnames = ConfirmCoordinateSurnames(surnames, coordinateBare, adjectiveBare, signers, certificateSigners);
         var cipher = title.Cipher ?? cipherFromName ?? "";
         return new RdDocument
         {
@@ -128,7 +139,7 @@ public static partial class RdParser
         };
     }
 
-    private static (string Title, string Full, List<string> Surnames) ReadPdf(string path)
+    private static (string Title, string Full, List<string> Surnames, List<string> CoordinateBare, List<string> AdjectiveBare) ReadPdf(string path)
     {
         using var stream = SharedRead.Stream(path);
         using var pdf = PdfDocument.Open(stream);
@@ -157,7 +168,8 @@ public static partial class RdParser
                 title.AppendLine(text);
         }
 
-        return (title.ToString(), full.ToString(), CollectSurnames(pages));
+        var harvest = Harvest(pages);
+        return (title.ToString(), full.ToString(), harvest.Surnames, harvest.CoordinateBare, harvest.AdjectiveBare);
     }
 
     private static (List<string> Lines, string Stamp, List<string> Cells) PageLayout(Page page, string fallback)
@@ -440,17 +452,39 @@ public static partial class RdParser
     /// «ИвановаМ» и «.В.» — фамилия без хвостовой заглавной.
     /// «Иванова К .А.» (буква инициала отдельным словом) — тоже фамилия.
     /// </summary>
-    public static List<string> CollectSurnames(IReadOnlyList<RdPage> pages)
+    public static List<string> CollectSurnames(IReadOnlyList<RdPage> pages) =>
+        Harvest(pages).Surnames;
+
+    private readonly record struct SurnameHarvest(
+        List<string> Surnames,
+        List<string> CoordinateBare,
+        List<string> AdjectiveBare);
+
+    private readonly record struct CoordinateNames(
+        List<string> WithInitials,
+        List<string> Bare,
+        List<string> Adjectives);
+
+    /// <summary>
+    /// Текст и координаты сливаются. Голая фамилия только из графы, без инициалов и без
+    /// совпадения с сертификатом, в итог разбора не попадает: её отсекает ConfirmCoordinateSurnames.
+    /// </summary>
+    private static SurnameHarvest Harvest(IReadOnlyList<RdPage> pages)
     {
         var lexicon = TitleNameWords(pages);
         var found = new List<string>();
+        var bare = new List<string>();
+        var adjectives = new List<string>();
         var passedVor = false;
         foreach (var page in pages)
         {
             if (passedVor)
                 break;
 
-            found.AddRange(SurnamesFromCoordinateCells(page.CoordinateCells, lexicon));
+            var cells = ReadCoordinate(page.CoordinateCells, lexicon);
+            found.AddRange(cells.WithInitials);
+            bare.AddRange(cells.Bare);
+            adjectives.AddRange(cells.Adjectives);
 
             if (page.Number <= 2)
             {
@@ -478,7 +512,59 @@ public static partial class RdParser
             }
         }
 
-        return DistinctSurnames(found);
+        var textKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in found)
+            textKeys.Add(TextMatch.Normalize(name));
+        var bareOnly = bare.Where(name => !textKeys.Contains(TextMatch.Normalize(name))).ToList();
+        found.AddRange(bareOnly);
+        return new SurnameHarvest(DistinctSurnames(found), DistinctSurnames(bareOnly), DistinctSurnames(adjectives));
+    }
+
+    /// <summary>
+    /// Фамилия из координатной графы без инициалов остаётся, только если она есть в сертификате .sig.
+    /// Прилагательные на -ый/-ий/-ые/-ие без инициалов и без сертификата отбрасываются.
+    /// Фамилия с инициалами, в том числе на -ий/-ая/-их, сохраняется.
+    /// </summary>
+    private static List<string> ConfirmCoordinateSurnames(
+        List<string> surnames,
+        IReadOnlyList<string> coordinateBare,
+        IReadOnlyList<string> adjectiveBare,
+        IReadOnlyList<string> signers,
+        IReadOnlyList<CertificateSigner> people)
+    {
+        var bareKeys = new HashSet<string>(coordinateBare.Select(TextMatch.Normalize), StringComparer.Ordinal);
+        var kept = new List<string>();
+        foreach (var name in surnames)
+        {
+            if (bareKeys.Contains(TextMatch.Normalize(name)) && !MatchesSigner(name, signers, people))
+                continue;
+            kept.Add(name);
+        }
+
+        foreach (var name in adjectiveBare)
+        {
+            if (MatchesSigner(name, signers, people))
+                kept.Add(name);
+        }
+
+        return DistinctSurnames(kept);
+    }
+
+    private static bool MatchesSigner(string name, IReadOnlyList<string> signers, IReadOnlyList<CertificateSigner> people)
+    {
+        if (signers.Any(item => SignerNames.Matches(name, item)))
+            return true;
+        foreach (var person in people)
+        {
+            if (SignerNames.Matches(name, person.Surname))
+                return true;
+            if (person.MatchKey.Length > 0 && SignerNames.Matches(name, person.MatchKey))
+                return true;
+            if (person.DisplayName.Length > 0 && SignerNames.Matches(name, person.DisplayName))
+                return true;
+        }
+
+        return false;
     }
 
     public static List<string> ExtractSurnames(string text) =>
@@ -487,32 +573,49 @@ public static partial class RdParser
     /// <summary>
     /// Графа фамилии формы 3. Текст штампа по-прежнему разбирается отдельно и сливается с этим списком.
     /// </summary>
-    private static List<string> SurnamesFromCoordinateCells(IReadOnlyList<string>? cells, ISet<string> lexicon)
+    private static CoordinateNames ReadCoordinate(IReadOnlyList<string>? cells, ISet<string> lexicon)
     {
-        var found = new List<string>();
+        var withInitials = new List<string>();
+        var bare = new List<string>();
+        var adjectives = new List<string>();
         if (cells is null)
-            return found;
+            return new CoordinateNames(withInitials, bare, adjectives);
         foreach (var cell in cells)
         {
             if (string.IsNullOrWhiteSpace(cell))
                 continue;
-            found.AddRange(SurnamesOnLine(cell, lexicon));
-            found.AddRange(GluedSurnames(cell));
+            var patterned = SurnamesOnLine(cell, lexicon);
+            var glued = GluedSurnames(cell);
+            withInitials.AddRange(patterned);
+            withInitials.AddRange(glued);
+            var known = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var name in patterned.Concat(glued))
+                known.Add(TextMatch.Normalize(name));
             foreach (var raw in cell.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
             {
                 var value = raw.Trim().Trim('"', '«', '»', '.', ',', ';', ':');
-                if (!BareSurname().IsMatch(value))
+                if (!BareSurname().IsMatch(value) || IsRoleLine(value) || IsListedName(value, lexicon))
                     continue;
-                if (IsRoleLine(value))
+                var key = TextMatch.Normalize(value);
+                if (key.Length < 3 || SurnameStop.Contains(key) || known.Contains(key))
                     continue;
-                if (IsListedName(value, lexicon))
-                    continue;
-                found.Add(value);
+                if (IsStampAdjective(key))
+                    adjectives.Add(value);
+                else
+                    bare.Add(value);
             }
         }
 
-        return found;
+        return new CoordinateNames(withInitials, bare, adjectives);
     }
+
+    /// <summary>Обычные прилагательные и множественное число. Фамилия на -ий проходит, если рядом инициалы или она есть в сертификате.</summary>
+    private static bool IsStampAdjective(string key) =>
+        key.Length >= 4
+        && (key.EndsWith("ые", StringComparison.Ordinal)
+            || key.EndsWith("ие", StringComparison.Ordinal)
+            || key.EndsWith("ый", StringComparison.Ordinal)
+            || key.EndsWith("ий", StringComparison.Ordinal));
 
     private static bool IsVorPage(string text)
     {

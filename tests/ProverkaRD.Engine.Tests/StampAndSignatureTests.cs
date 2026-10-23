@@ -111,14 +111,153 @@ public class StampAndSignatureTests
                 "Этап 4.10 Сооружения",
                 "Инв. № подл.",
             ]);
+            var unsigned = RdParser.Parse(path);
+            Assert.Contains(unsigned.Surnames, name => name.Contains("Волгин", StringComparison.Ordinal));
+            Assert.DoesNotContain(unsigned.Surnames, name => name == "Фролов");
+            Assert.Equal("4.10", unsigned.ElementNo);
+
+            var bytes = File.ReadAllBytes(path);
+            var now = DateTime.UtcNow;
+            var (keys, cert) = GostCertificates.Issue("Фролов", "Иван Иванович", now.AddDays(-10), now.AddDays(10));
+            File.WriteAllBytes(path + ".sig", GostCertificates.Sign(bytes, keys.Private, cert, now, includeTime: true));
             var rd = RdParser.Parse(path);
             Assert.Contains(rd.Surnames, name => name == "Фролов");
-            Assert.Contains(rd.Surnames, name => name == "Белкина");
-            Assert.Contains(rd.Surnames, name => name == "Гордеев");
-            Assert.Contains(rd.Surnames, name => name == "Лесной");
-            Assert.Contains(rd.Surnames, name => name == "Морозов");
             Assert.Contains(rd.Surnames, name => name.Contains("Волгин", StringComparison.Ordinal));
+            Assert.DoesNotContain(rd.Surnames, name => name == "Белкина");
+            Assert.DoesNotContain(rd.Surnames, name => name == "Гордеев");
             Assert.Equal("4.10", rd.ElementNo);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Coordinate_title_words_are_not_surnames_and_adjective_endings_need_initials_or_a_certificate()
+    {
+        var cells = new[]
+        {
+            "Детали", "Соединительные", "Все", "Рабочие", "Проектируемый",
+            "Бельский И.И.", "Полевая А.А.", "Долгих И.И.", "Фролов",
+        };
+        var surnames = RdParser.CollectSurnames(
+        [
+            new RdParser.RdPage(1, "Разраб. Волгин А.А.", "", CoordinateCells: cells),
+        ]);
+        Assert.Contains(surnames, name => name.Contains("Волгин", StringComparison.Ordinal));
+        Assert.Contains(surnames, name => name.Contains("Бельский", StringComparison.Ordinal));
+        Assert.Contains(surnames, name => name.Contains("Полевая", StringComparison.Ordinal));
+        Assert.Contains(surnames, name => name.Contains("Долгих", StringComparison.Ordinal));
+        Assert.Contains(surnames, name => name == "Фролов");
+        Assert.DoesNotContain(surnames, name => name.Contains("Детали", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, name => name.Contains("Соединительные", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, name => name.Equals("Все", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, name => name.Contains("Рабочие", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(surnames, name => name.Contains("Проектируемый", StringComparison.OrdinalIgnoreCase));
+
+        var bareAdjective = RdParser.CollectSurnames(
+        [
+            new RdParser.RdPage(1, "Титул", "", CoordinateCells: ["Бельский", "Полевая", "Долгих"]),
+        ]);
+        Assert.DoesNotContain(bareAdjective, name => name.Contains("Бельский", StringComparison.Ordinal));
+        Assert.Contains(bareAdjective, name => name.Contains("Полевая", StringComparison.Ordinal));
+        Assert.Contains(bareAdjective, name => name.Contains("Долгих", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void False_stamp_words_are_not_critical_and_a_real_surname_with_initials_still_is()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-false-stamp");
+        var path = Path.Combine(dir.FullName, "100-20-3000-А-КЖ1.pdf");
+        try
+        {
+            WriteStampPdf(path,
+            [
+                (5, "Разраб.", "Детали"),
+                (6, "Пров.", "Соединительные"),
+                (7, "ГИП", "Все"),
+                (8, "Нач.отд.", "Рабочие"),
+                (9, "Н.контр.", "Проектируемый"),
+                (10, "Утв.", "Бельский И.И."),
+            ],
+            [
+                "РАБОЧАЯ ДОКУМЕНТАЦИЯ",
+                "100-20-3000-А-КЖ1",
+                "Разраб. Волгин А.А.",
+                "Пров. Бельский И.И.",
+                "Этап 4.10 Сооружения",
+            ]);
+            var bytes = File.ReadAllBytes(path);
+            var now = DateTime.UtcNow;
+            var (keys, cert) = GostCertificates.Issue("Фролов", "Иван Иванович", now.AddDays(-5), now.AddDays(20));
+            File.WriteAllBytes(path + ".sig", GostCertificates.Sign(bytes, keys.Private, cert, now, includeTime: true));
+            var report = new CheckingEngine().Run(new CheckInput { RdPaths = [path] });
+            Assert.Contains(report.Findings, finding =>
+                finding.CheckName == "Фамилия без подписи"
+                && finding.Severity == Severity.Critical
+                && (finding.ValueA.Contains("Бельский", StringComparison.Ordinal) || finding.InRd.Contains("Бельский", StringComparison.Ordinal)));
+            Assert.Contains(report.Findings, finding =>
+                finding.CheckName == "Фамилия без подписи" && finding.ValueA.Contains("Волгин", StringComparison.Ordinal));
+            Assert.DoesNotContain(report.Findings, finding =>
+                finding.CheckName == "Фамилия без подписи"
+                && (finding.ValueA.Contains("Детали", StringComparison.OrdinalIgnoreCase)
+                    || finding.ValueA.Contains("Соединительные", StringComparison.OrdinalIgnoreCase)
+                    || finding.ValueA.Contains("Рабочие", StringComparison.OrdinalIgnoreCase)
+                    || finding.ValueA.Contains("Проектируемый", StringComparison.OrdinalIgnoreCase)
+                    || finding.ValueA.Equals("Все", StringComparison.OrdinalIgnoreCase)));
+
+            File.Delete(path + ".sig");
+            var (ownKeys, ownCert) = GostCertificates.Issue("Бельский", "Пётр", now.AddDays(-5), now.AddDays(20));
+            WriteStampPdf(path, [(5, "Разраб.", "Бельский"), (6, "Пров.", "Полевая А.А."), (7, "ГИП", "Долгих")],
+            [
+                "РАБОЧАЯ ДОКУМЕНТАЦИЯ",
+                "100-20-3000-А-КЖ1",
+                "Этап 4.10 Сооружения",
+            ]);
+            bytes = File.ReadAllBytes(path);
+            File.WriteAllBytes(path + ".sig", GostCertificates.Sign(bytes, ownKeys.Private, ownCert, now, includeTime: true));
+            var kept = RdParser.Parse(path);
+            Assert.Contains(kept.Surnames, name => name.Contains("Бельский", StringComparison.Ordinal));
+            Assert.Contains(kept.Surnames, name => name.Contains("Полевая", StringComparison.Ordinal));
+            Assert.DoesNotContain(kept.Surnames, name => name.Contains("Долгих", StringComparison.Ordinal));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Stray_pdf_is_a_warning_in_the_registry_and_in_the_summary()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-stray-pdf");
+        var path = Path.Combine(dir.FullName, "Письмо.pdf");
+        try
+        {
+            WriteStampPdf(path, [(5, "Разраб.", "Детали")], ["Сопроводительное письмо без шифра"]);
+            var bytes = File.ReadAllBytes(path);
+            var now = DateTime.UtcNow;
+            var (keys, cert) = GostCertificates.Issue("Фролов", "Иван", now.AddDays(-5), now.AddDays(20));
+            File.WriteAllBytes(path + ".sig", GostCertificates.Sign(bytes, keys.Private, cert, now, includeTime: true));
+
+            var report = new CheckingEngine().Run(new CheckInput { RdPaths = [path] });
+            var stray = Assert.Single(report.Findings, finding => finding.CheckName == "Посторонний файл");
+            Assert.Equal(Severity.Warning, stray.Severity);
+            Assert.DoesNotContain(report.Findings, finding => finding.CheckName == "Электронная подпись");
+            Assert.DoesNotContain(report.Findings, finding => finding.CheckName == "Фамилия без подписи");
+            var row = Assert.Single(report.Registry);
+            Assert.Equal(Severity.Warning, row.SignatureStatus);
+            Assert.Equal(Severity.Warning, row.Overall);
+            Assert.NotEqual(Severity.Critical, row.CertStatus);
+
+            var reportPath = Path.Combine(dir.FullName, "report.xlsx");
+            ReportWriter.Write(report, reportPath, "0.1.2");
+            using var book = new XLWorkbook(reportPath);
+            var summary = book.Worksheet("Сводка");
+            Assert.Contains("Предупреждения: 1", summary.Cell(2, 1).GetString());
+            Assert.Equal(1d, summary.Cell(6, 5).GetDouble());
+            Assert.Equal("Предупреждение", book.Worksheet("Реестр комплекта").Cell(5, 8).GetString());
         }
         finally
         {

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace ProverkaRD.Engine;
 
 public sealed class CheckOptions
@@ -199,6 +201,23 @@ public sealed class ActResult
     public int CriticalCount { get; set; }
     public int FormattingCount { get; set; }
     public int WarningCount { get; set; }
+
+    public string NameTip => Pair("В акте", ActElementName, "В ВЭРД", VerdElementName);
+    public string CostNameTip => Pair("В акте", ActCostName, "В ВЭСР", VesrCostName);
+    public string CodeTip => Pair("В акте", ActCode, "В ВЭРД", VerdCode);
+    public string NetTip => Pair("В акте", Money(ActNet), "В ВЭСР", Money(VesrNet));
+    public string VatTip => Pair("В акте", Money(ActVat), "Расчёт", Money(VatRecalculated));
+    public string GrossTip => Pair("В акте", Money(ActGross), "Расчёт", Money(GrossRecalculated));
+    public string UnitTip => Pair("В акте, без НДС", Money(ActNet), "Цена ВЭСР", Money(VesrUnitPrice));
+    public string CompletenessTip => string.IsNullOrWhiteSpace(CompletenessText) ? "—" : CompletenessText;
+
+    private static string Pair(string leftLabel, string? left, string rightLabel, string? right) =>
+        leftLabel + ": " + Blank(left) + "\n" + rightLabel + ": " + Blank(right);
+
+    private static string Blank(string? value) => string.IsNullOrWhiteSpace(value) ? "—" : value.Trim();
+
+    private static string Money(decimal? value) =>
+        value is null ? "—" : value.Value.ToString("N2", CultureInfo.GetCultureInfo("ru-RU"));
 }
 
 public sealed class KitResult
@@ -241,6 +260,15 @@ public sealed class KitResult
     public Severity SurnameStatus { get; init; }
     public string Presence { get; init; } = "";
     public Severity Overall { get; init; }
+
+    public string NameTip => Pair("В акте", ActKitName, "В ВЭРД", VerdKitName) + "\nВ РД: " + Blank(RdKitName);
+    public string ElementTip => Pair("В акте", ActElementName, "В ВЭРД", VerdElementName) + "\nВ РД: " + Blank(RdElementName);
+    public string SurnameTip => "В документе: " + Blank(Surnames) + "\nВ сертификате: " + Blank(Signers);
+
+    private static string Pair(string leftLabel, string? left, string rightLabel, string? right) =>
+        leftLabel + ": " + Blank(left) + "\n" + rightLabel + ": " + Blank(right);
+
+    private static string Blank(string? value) => string.IsNullOrWhiteSpace(value) ? "—" : value.Trim();
 }
 
 public sealed record Notice(string Source, string Place, string Message);

@@ -271,14 +271,19 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     private bool _busy;
     private string _status = "Загрузите ВЭРД и ВЭСР, добавьте акты и комплекты, затем нажмите «Проверить».";
     private string _filter = "";
-    private string _summary = "Результатов пока нет.";
     private string _stateKind = "idle";
     private string _stateTitle = "Ожидание";
     private string _stateDetail = "Загрузите ВЭРД и ВЭСР, добавьте акты и комплекты, затем нажмите «Проверить».";
+    private string _resultLine = "";
+    private string _resultDetails = "";
+    private bool _hasResult;
+    private bool _actsOpen = true;
+    private bool _rdOpen = true;
     private double _progressValue;
     private string _progressText = "";
     private bool _showProgress;
     private CheckReport? _report;
+    private ActResult? _selectedAct;
 
     public ObservableCollection<InputFile> RdFiles { get; } = [];
     public ObservableCollection<InputFile> ActFiles { get; } = [];
@@ -287,6 +292,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     public ObservableCollection<KitResult> FilteredKits { get; } = [];
     public ObservableCollection<Finding> FilteredFindings { get; } = [];
     public ObservableCollection<Notice> FilteredNotices { get; } = [];
+    public ObservableCollection<Finding> SelectedRemarks { get; } = [];
 
     public WorkspaceModel()
     {
@@ -340,11 +346,43 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         set { _status = value; Raise(); }
     }
 
-    public string SummaryText
+    public string ResultLine => _resultLine;
+    public string ResultDetails => _resultDetails;
+    public bool HasResult => _hasResult;
+    public bool HasDetails => _hasResult && _resultDetails.Length > 0;
+    public bool ShowStateDetail => !string.IsNullOrWhiteSpace(_stateDetail);
+
+    public bool ActsOpen
     {
-        get => _summary;
-        private set { _summary = value; Raise(); }
+        get => _actsOpen;
+        set { _actsOpen = value; Raise(); }
     }
+
+    public bool RdOpen
+    {
+        get => _rdOpen;
+        set { _rdOpen = value; Raise(); }
+    }
+
+    public ActResult? SelectedAct
+    {
+        get => _selectedAct;
+        set
+        {
+            _selectedAct = value;
+            Raise();
+            Raise(nameof(HasSelectedAct));
+            Raise(nameof(SelectedActTitle));
+            Raise(nameof(SelectedRemarksEmpty));
+            FillRemarks();
+        }
+    }
+
+    public bool HasSelectedAct => _selectedAct is not null;
+    public bool SelectedRemarksEmpty => _selectedAct is not null && SelectedRemarks.Count == 0;
+    public string SelectedActTitle => _selectedAct is null
+        ? ""
+        : "Замечания" + (_selectedAct.ElementNo.Length > 0 ? " · " + _selectedAct.ElementNo : "") + " · " + _selectedAct.FileName;
 
     public string StateKind => _stateKind;
     public string StateTitle => _stateTitle;
@@ -359,6 +397,10 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         _showProgress = true;
         _progressValue = 0;
         _progressText = "";
+        _hasResult = false;
+        Raise(nameof(HasResult));
+        Raise(nameof(HasDetails));
+        Raise(nameof(ResultLine));
         SetState("checking", "Идёт проверка", "Подготовка списка файлов.");
         Raise(nameof(ShowProgress));
         Raise(nameof(ProgressValue));
@@ -460,20 +502,27 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         var formatting = report.Findings.Count(f => f.Severity == Severity.Formatting);
         var warnings = report.Findings.Count(f => f.Severity == Severity.Warning);
         var ok = report.Acts.Count(a => a.Overall == Severity.Ok);
-        var counts = string.IsNullOrWhiteSpace(report.Load.Text) ? "" : report.Load.Text + Environment.NewLine;
-        SummaryText = counts + $"Критично: {critical} · оформление: {formatting} · предупреждения: {warnings} · актов без замечаний: {ok}";
+        _resultLine = $"Критично {critical} · Оформление {formatting} · Предупреждений {warnings} · Без замечаний {ok}";
+        _resultDetails = report.Load.Text ?? "";
+        _hasResult = true;
         _showProgress = false;
         Raise(nameof(ShowProgress));
-        var detail = SummaryText.Replace(Environment.NewLine, " ");
+        Raise(nameof(ResultLine));
+        Raise(nameof(ResultDetails));
+        Raise(nameof(HasResult));
+        Raise(nameof(HasDetails));
         if (report.LockedFiles > 0)
-            SetState("locked", "Файл занят другой программой", "Закройте файл в Excel или Word и повторите проверку. " + detail);
+            SetState("locked", "Файл занят другой программой", "Закройте файл в Excel или Word и повторите проверку.");
         else if (report.VerdUnreadable || report.VesrUnreadable)
-            SetState("unreadable", "Ведомость не читается", FirstProblem(report, "ВЭРД или ВЭСР не удалось прочитать.") + " " + detail);
+            SetState("unreadable", "Ведомость не читается", FirstProblem(report, "ВЭРД или ВЭСР не удалось прочитать."));
         else if (report.VerdMissing || report.VesrMissing)
-            SetState("missing", "Нет ведомости", MissingText(report) + " " + detail);
+            SetState("missing", "Нет ведомости", MissingText(report));
         else
-            SetState("finished", "Проверка завершена", detail);
-        StatusText = _stateDetail;
+            SetState("finished", "Проверка завершена", "");
+        StatusText = _stateTitle;
+        ActsOpen = false;
+        RdOpen = false;
+        SelectedAct = null;
         Raise(nameof(CanExport));
         Refilter();
     }
@@ -498,6 +547,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         Raise(nameof(StateKind));
         Raise(nameof(StateTitle));
         Raise(nameof(StateDetail));
+        Raise(nameof(ShowStateDetail));
     }
 
     private void Refilter()
@@ -509,15 +559,49 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         if (_report is null)
             return;
         var needle = _filter.Trim();
-        foreach (var act in _report.Acts.Where(a => Hits(needle, a.FileName, a.ElementNo, a.ActCode, a.CompletenessText, a.ActElementName)))
+        foreach (var act in _report.Acts
+                     .Where(a => Hits(needle, a.FileName, a.ElementNo, a.ActCode, a.CompletenessText, a.ActElementName))
+                     .OrderBy(a => Rank(a.Overall))
+                     .ThenBy(a => a.ElementNo, Comparer<string>.Create(ElementOrder.Compare)))
             FilteredActs.Add(act);
-        foreach (var kit in _report.Kits.Where(k => Hits(needle, k.Cipher, k.ActName, k.ElementNo, k.Surnames, k.Signers, k.ActKitName, k.RdElementName)))
+        foreach (var kit in _report.Kits
+                     .Where(k => Hits(needle, k.Cipher, k.ActName, k.ElementNo, k.Surnames, k.Signers, k.ActKitName, k.RdElementName))
+                     .OrderBy(k => Rank(k.Overall))
+                     .ThenBy(k => k.ElementNo, Comparer<string>.Create(ElementOrder.Compare)))
             FilteredKits.Add(kit);
-        foreach (var finding in _report.Findings.Where(f => Hits(needle, f.Act, f.Kit, f.ElementNo, f.CheckName, f.ValueA, f.ValueB, f.InAct, f.InRd, f.InVerd, f.InVesr, f.Places, f.ErrorWhere)))
+        foreach (var finding in _report.Findings
+                     .Where(f => Hits(needle, f.Act, f.Kit, f.ElementNo, f.CheckName, f.ValueA, f.ValueB, f.InAct, f.InRd, f.InVerd, f.InVesr, f.Places, f.ErrorWhere))
+                     .OrderBy(f => Rank(f.Severity))
+                     .ThenBy(f => f.ElementNo, Comparer<string>.Create(ElementOrder.Compare)))
             FilteredFindings.Add(finding);
         foreach (var notice in _report.Notices.Where(n => Hits(needle, n.Source, n.Place, n.Message)))
             FilteredNotices.Add(notice);
     }
+
+    private void FillRemarks()
+    {
+        SelectedRemarks.Clear();
+        if (_selectedAct is null || _report is null)
+        {
+            Raise(nameof(SelectedRemarksEmpty));
+            return;
+        }
+
+        foreach (var finding in _report.Findings
+                     .Where(item => ActScore.Concerns(_selectedAct, item))
+                     .OrderBy(item => Rank(item.Severity))
+                     .ThenBy(item => item.CheckName, StringComparer.CurrentCultureIgnoreCase))
+            SelectedRemarks.Add(finding);
+        Raise(nameof(SelectedRemarksEmpty));
+    }
+
+    private static int Rank(Severity severity) => severity switch
+    {
+        Severity.Critical => 0,
+        Severity.Formatting => 1,
+        Severity.Warning => 2,
+        _ => 3,
+    };
 
     private static bool Hits(string needle, params string?[] parts)
     {

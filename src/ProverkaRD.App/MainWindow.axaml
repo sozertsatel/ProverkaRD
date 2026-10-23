@@ -10,28 +10,41 @@
     <Window.Resources>
         <local:SeverityTextConverter x:Key="SevText"/>
         <local:SeverityBrushConverter x:Key="SevBrush"/>
+        <local:FailBrushConverter x:Key="FailBrush"/>
+        <local:MoneyTextConverter x:Key="MoneyText"/>
         <local:StateBrushConverter x:Key="StateBrush"/>
     </Window.Resources>
 
+    <Window.Styles>
+        <Style Selector="DataGridRow">
+            <Setter Property="Background" Value="White"/>
+        </Style>
+    </Window.Styles>
+
     <DockPanel>
         <Border DockPanel.Dock="Top" Background="#1F4E79" Padding="22,16">
-            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-                <StackPanel Spacing="4">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <TextBlock Text="Проверка РД" FontSize="28" FontWeight="Bold" Foreground="White"/>
-                        <TextBlock x:Name="VersionText" Text="0.1.1" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock Text="Проверка РД" FontSize="28" FontWeight="Bold" Foreground="White"/>
+                    <TextBlock x:Name="VersionText" Text="0.1.2" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+                </StackPanel>
+                <Button Grid.Column="1" Classes="onDark" Click="OnSettings" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="⚙" FontSize="18" Foreground="#1F4E79"/>
+                        <TextBlock Text="Настройки" Foreground="#1F4E79" VerticalAlignment="Center"/>
                     </StackPanel>
-                </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <Button Content="Настройки" Click="OnSettings"/>
-                </StackPanel>
+                </Button>
             </Grid>
         </Border>
 
         <Border DockPanel.Dock="Top" Padding="18,10" Background="{Binding StateKind, Converter={StaticResource StateBrush}}">
-            <StackPanel Spacing="6">
+            <StackPanel Spacing="4">
                 <TextBlock Text="{Binding StateTitle}" FontWeight="SemiBold" FontSize="16"/>
-                <TextBlock Text="{Binding StateDetail}" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding ResultLine}" FontSize="22" FontWeight="Bold" TextWrapping="Wrap" IsVisible="{Binding HasResult}"/>
+                <Expander Header="Подробнее" IsVisible="{Binding HasDetails}" IsExpanded="False" Padding="0">
+                    <TextBlock Text="{Binding ResultDetails}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                </Expander>
+                <TextBlock Text="{Binding StateDetail}" TextWrapping="Wrap" IsVisible="{Binding ShowStateDetail}"/>
                 <ProgressBar Minimum="0" Maximum="1" Value="{Binding ProgressValue}" IsVisible="{Binding ShowProgress}" Height="8"/>
                 <TextBlock Text="{Binding ProgressText}" IsVisible="{Binding ShowProgress}" FontWeight="SemiBold"/>
             </StackPanel>
@@ -67,67 +80,74 @@
         </Border>
 
         <Grid Margin="16" RowDefinitions="Auto,*">
-            <Grid ColumnDefinitions="*,12,*" ColumnSpacing="0">
-                <Border Grid.Column="2" Background="White" CornerRadius="10" Padding="12" BorderBrush="#E2E7EE" BorderThickness="1"
-                        DragDrop.AllowDrop="True" DragDrop.Drop="OnRdDrop">
-                    <DockPanel>
-                        <StackPanel DockPanel.Dock="Top" Spacing="8">
-                            <TextBlock Text="Комплекты РД" FontWeight="SemiBold" FontSize="16"/>
-                            <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
-                                       Text="PDF и DOCX. Подпись .sig подхватывается рядом с файлом и в список отдельно не попадает."/>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <Button Classes="quiet" Content="Файлы" Click="OnAddRdFiles" IsEnabled="{Binding CanRun}"/>
-                                <Button Classes="quiet" Content="Папка" Click="OnAddRdFolder" IsEnabled="{Binding CanRun}"/>
-                                <Button Classes="quiet" Content="Удалить" Click="OnRemoveRd" IsEnabled="{Binding CanRun}"/>
-                                <Button Classes="quiet" Content="Очистить" Click="OnClearRd" IsEnabled="{Binding CanRun}"/>
+            <Grid ColumnDefinitions="*,12,*">
+                <Border Grid.Column="0" Background="White" CornerRadius="10" BorderBrush="#E2E7EE" BorderThickness="1"
+                        DragDrop.AllowDrop="True" DragDrop.Drop="OnActDrop">
+                    <Expander IsExpanded="{Binding ActsOpen, Mode=TwoWay}" Padding="12" HorizontalAlignment="Stretch">
+                        <Expander.Header>
+                            <TextBlock Text="Акты сдачи-приёмки" FontWeight="SemiBold" FontSize="16"/>
+                        </Expander.Header>
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Top" Spacing="8">
+                                <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
+                                           Text="DOCX. Номер элемента читается из имени файла, строки «АКТ №» и скобок в «№ тома»."/>
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Button Classes="quiet" Content="Файлы" Click="OnAddActFiles" IsEnabled="{Binding CanRun}"/>
+                                    <Button Classes="quiet" Content="Папка" Click="OnAddActFolder" IsEnabled="{Binding CanRun}"/>
+                                    <Button Classes="quiet" Content="Удалить" Click="OnRemoveAct" IsEnabled="{Binding CanRun}"/>
+                                    <Button Classes="quiet" Content="Очистить" Click="OnClearActs" IsEnabled="{Binding CanRun}"/>
+                                </StackPanel>
                             </StackPanel>
-                        </StackPanel>
-                        <Panel Margin="0,8,0,0">
-                            <ListBox x:Name="RdList" ItemsSource="{Binding RdFiles}" MaxHeight="168" MinHeight="96">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <TextBlock IsVisible="{Binding RdEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
-                                       Text="Перетащите сюда комплекты или выберите файлы и папку."/>
-                        </Panel>
-                    </DockPanel>
+                            <Panel Margin="0,8,0,0">
+                                <ListBox x:Name="ActList" ItemsSource="{Binding ActFiles}" MaxHeight="168" MinHeight="96">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock IsVisible="{Binding ActEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
+                                           Text="Перетащите сюда акты или выберите файлы и папку."/>
+                            </Panel>
+                        </DockPanel>
+                    </Expander>
                 </Border>
 
-                <Border Grid.Column="0" Background="White" CornerRadius="10" Padding="12" BorderBrush="#E2E7EE" BorderThickness="1"
-                        DragDrop.AllowDrop="True" DragDrop.Drop="OnActDrop">
-                    <DockPanel>
-                        <StackPanel DockPanel.Dock="Top" Spacing="8">
-                            <TextBlock Text="Акты сдачи-приёмки" FontWeight="SemiBold" FontSize="16"/>
-                            <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
-                                       Text="DOCX. Номер элемента читается из имени файла, строки «АКТ №» и скобок в «№ тома»."/>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <Button Classes="quiet" Content="Файлы" Click="OnAddActFiles" IsEnabled="{Binding CanRun}"/>
-                                <Button Classes="quiet" Content="Папка" Click="OnAddActFolder" IsEnabled="{Binding CanRun}"/>
-                                <Button Classes="quiet" Content="Удалить" Click="OnRemoveAct" IsEnabled="{Binding CanRun}"/>
-                                <Button Classes="quiet" Content="Очистить" Click="OnClearActs" IsEnabled="{Binding CanRun}"/>
+                <Border Grid.Column="2" Background="White" CornerRadius="10" BorderBrush="#E2E7EE" BorderThickness="1"
+                        DragDrop.AllowDrop="True" DragDrop.Drop="OnRdDrop">
+                    <Expander IsExpanded="{Binding RdOpen, Mode=TwoWay}" Padding="12" HorizontalAlignment="Stretch">
+                        <Expander.Header>
+                            <TextBlock Text="Комплекты РД" FontWeight="SemiBold" FontSize="16"/>
+                        </Expander.Header>
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Top" Spacing="8">
+                                <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
+                                           Text="PDF и DOCX. Подпись .sig подхватывается рядом с файлом и в список отдельно не попадает."/>
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Button Classes="quiet" Content="Файлы" Click="OnAddRdFiles" IsEnabled="{Binding CanRun}"/>
+                                    <Button Classes="quiet" Content="Папка" Click="OnAddRdFolder" IsEnabled="{Binding CanRun}"/>
+                                    <Button Classes="quiet" Content="Удалить" Click="OnRemoveRd" IsEnabled="{Binding CanRun}"/>
+                                    <Button Classes="quiet" Content="Очистить" Click="OnClearRd" IsEnabled="{Binding CanRun}"/>
+                                </StackPanel>
                             </StackPanel>
-                        </StackPanel>
-                        <Panel Margin="0,8,0,0">
-                            <ListBox x:Name="ActList" ItemsSource="{Binding ActFiles}" MaxHeight="168" MinHeight="96">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <TextBlock IsVisible="{Binding ActEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
-                                       Text="Перетащите сюда акты или выберите файлы и папку."/>
-                        </Panel>
-                    </DockPanel>
+                            <Panel Margin="0,8,0,0">
+                                <ListBox x:Name="RdList" ItemsSource="{Binding RdFiles}" MaxHeight="168" MinHeight="96">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock IsVisible="{Binding RdEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
+                                           Text="Перетащите сюда комплекты или выберите файлы и папку."/>
+                            </Panel>
+                        </DockPanel>
+                    </Expander>
                 </Border>
             </Grid>
 
             <DockPanel Grid.Row="1" Margin="0,12,0,0">
-                <StackPanel DockPanel.Dock="Top" Margin="2,0,0,8" Spacing="8">
-                    <TextBlock Text="{Binding SummaryText}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <StackPanel DockPanel.Dock="Top" Margin="2,0,0,8">
                     <Grid ColumnDefinitions="*,Auto">
                         <TextBox PlaceholderText="Фильтр по акту, шифру или тексту" Text="{Binding FilterText}" Width="320" HorizontalAlignment="Left"/>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
@@ -138,53 +158,192 @@
                 </StackPanel>
                 <TabControl>
                     <TabItem Header="Акты">
-                        <DataGrid ItemsSource="{Binding FilteredActs}" IsReadOnly="True" CanUserSortColumns="True"
-                                  GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
-                                  AutoGenerateColumns="False">
-                            <DataGrid.Styles>
-                                <Style Selector="DataGridRow">
-                                    <Setter Property="Background" Value="{Binding Overall, Converter={StaticResource SevBrush}}"/>
-                                </Style>
-                            </DataGrid.Styles>
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Итог" Binding="{Binding Overall, Converter={StaticResource SevText}}" Width="160"/>
-                                <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="90"/>
-                                <DataGridTextColumn Header="Критично" Binding="{Binding CriticalCount}" Width="90"/>
-                                <DataGridTextColumn Header="Оформление" Binding="{Binding FormattingCount}" Width="110"/>
-                                <DataGridTextColumn Header="Предупреждения" Binding="{Binding WarningCount}" Width="140"/>
-                                <DataGridTextColumn Header="Акт" Binding="{Binding FileName}" Width="280"/>
-                                <DataGridTextColumn Header="Наименование" Binding="{Binding NameStatus, Converter={StaticResource SevText}}" Width="160"/>
-                                <DataGridTextColumn Header="Стоимость, имя" Binding="{Binding CostNameStatus, Converter={StaticResource SevText}}" Width="150"/>
-                                <DataGridTextColumn Header="Код ДГП" Binding="{Binding CodeStatus, Converter={StaticResource SevText}}" Width="150"/>
-                                <DataGridTextColumn Header="Без НДС, акт" Binding="{Binding ActNet, StringFormat={}{0:N2}}" Width="130"/>
-                                <DataGridTextColumn Header="Без НДС, ВЭСР" Binding="{Binding VesrNet, StringFormat={}{0:N2}}" Width="140"/>
-                                <DataGridTextColumn Header="Без НДС" Binding="{Binding NetStatus, Converter={StaticResource SevText}}" Width="140"/>
-                                <DataGridTextColumn Header="С НДС" Binding="{Binding GrossStatus, Converter={StaticResource SevText}}" Width="140"/>
-                                <DataGridTextColumn Header="НДС" Binding="{Binding VatStatus, Converter={StaticResource SevText}}" Width="120"/>
-                                <DataGridTextColumn Header="Цена за единицу" Binding="{Binding UnitPriceStatus, Converter={StaticResource SevText}}" Width="150"/>
-                                <DataGridTextColumn Header="Комплектность" Binding="{Binding CompletenessStatus, Converter={StaticResource SevText}}" Width="160"/>
-                                <DataGridTextColumn Header="Состав" Binding="{Binding CompletenessText}" Width="360"/>
-                            </DataGrid.Columns>
-                        </DataGrid>
+                        <Grid RowDefinitions="*,Auto">
+                            <DataGrid ItemsSource="{Binding FilteredActs}" SelectedItem="{Binding SelectedAct, Mode=TwoWay}"
+                                      IsReadOnly="True" CanUserSortColumns="True"
+                                      GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
+                                      AutoGenerateColumns="False">
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Width="10" CanUserResize="False" CanUserSort="False">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{Binding Overall, Converter={StaticResource SevBrush}}" Width="6" HorizontalAlignment="Left"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Итог" Width="150">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{Binding Overall, Converter={StaticResource SevBrush}}" CornerRadius="4" Padding="8,2" HorizontalAlignment="Left">
+                                                    <TextBlock Text="{Binding Overall, Converter={StaticResource SevText}}" FontWeight="SemiBold" Foreground="#1F2937"/>
+                                                </Border>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="90"/>
+                                    <DataGridTextColumn Header="Критично" Binding="{Binding CriticalCount}" Width="90"/>
+                                    <DataGridTextColumn Header="Оформление" Binding="{Binding FormattingCount}" Width="110"/>
+                                    <DataGridTextColumn Header="Предупреждения" Binding="{Binding WarningCount}" Width="140"/>
+                                    <DataGridTextColumn Header="Акт" Binding="{Binding FileName}" Width="280"/>
+                                    <DataGridTemplateColumn Header="Наименование" Width="140">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <local:CheckCell Status="{Binding NameStatus}" Tip="{Binding NameTip}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Стоимость, имя" Width="140">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <local:CheckCell Status="{Binding CostNameStatus}" Tip="{Binding CostNameTip}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Код ДГП" Width="120">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <local:CheckCell Status="{Binding CodeStatus}" Tip="{Binding CodeTip}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Без НДС, акт" Width="130">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{Binding NetStatus, Converter={StaticResource FailBrush}}" Padding="6,2">
+                                                    <TextBlock Text="{Binding ActNet, Converter={StaticResource MoneyText}}" HorizontalAlignment="Right"/>
+                                                </Border>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Без НДС, ВЭСР" Width="140">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{Binding NetStatus, Converter={StaticResource FailBrush}}" Padding="6,2">
+                                                    <TextBlock Text="{Binding VesrNet, Converter={StaticResource MoneyText}}" HorizontalAlignment="Right"/>
+                                                </Border>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Без НДС" Width="110">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <local:CheckCell Status="{Binding NetStatus}" Tip="{Binding NetTip}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="С НДС" Width="110">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <local:CheckCell Status="{Binding GrossStatus}" Tip="{Binding GrossTip}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="НДС" Width="100">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <local:CheckCell Status="{Binding VatStatus}" Tip="{Binding VatTip}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Цена за единицу" Width="150">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <local:CheckCell Status="{Binding UnitPriceStatus}" Tip="{Binding UnitTip}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Комплектность" Width="140">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <local:CheckCell Status="{Binding CompletenessStatus}" Tip="{Binding CompletenessTip}"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Состав" Binding="{Binding CompletenessText}" Width="360"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <Border Grid.Row="1" IsVisible="{Binding HasSelectedAct}" Margin="0,8,0,0" Padding="10" Background="White"
+                                    BorderBrush="#E2E7EE" BorderThickness="1" CornerRadius="8" MaxHeight="220">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedActTitle}" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                                    <TextBlock DockPanel.Dock="Top" IsVisible="{Binding SelectedRemarksEmpty}" Foreground="#5C6B7A"
+                                               Text="Замечаний по этому акту нет."/>
+                                    <DataGrid ItemsSource="{Binding SelectedRemarks}" IsReadOnly="True" CanUserSortColumns="True"
+                                              GridLinesVisibility="Horizontal" AutoGenerateColumns="False" MaxHeight="160">
+                                        <DataGrid.Columns>
+                                            <DataGridTemplateColumn Width="8" CanUserResize="False">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Border Background="{Binding Severity, Converter={StaticResource SevBrush}}" Width="6" HorizontalAlignment="Left"/>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTemplateColumn Header="Критичность" Width="140">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <Border Background="{Binding Severity, Converter={StaticResource SevBrush}}" CornerRadius="4" Padding="8,2" HorizontalAlignment="Left">
+                                                            <TextBlock Text="{Binding Severity, Converter={StaticResource SevText}}" FontWeight="SemiBold"/>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="Что проверялось" Binding="{Binding CheckName}" Width="220"/>
+                                            <DataGridTextColumn Header="В акте" Binding="{Binding InAct}" Width="200"/>
+                                            <DataGridTextColumn Header="В РД" Binding="{Binding InRd}" Width="200"/>
+                                            <DataGridTextColumn Header="В ВЭРД" Binding="{Binding InVerd}" Width="200"/>
+                                            <DataGridTextColumn Header="В ВЭСР" Binding="{Binding InVesr}" Width="200"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DockPanel>
+                            </Border>
+                        </Grid>
                     </TabItem>
                     <TabItem Header="Комплекты">
                         <DataGrid ItemsSource="{Binding FilteredKits}" IsReadOnly="True" CanUserSortColumns="True"
                                   GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
                                   AutoGenerateColumns="False">
-                            <DataGrid.Styles>
-                                <Style Selector="DataGridRow">
-                                    <Setter Property="Background" Value="{Binding Overall, Converter={StaticResource SevBrush}}"/>
-                                </Style>
-                            </DataGrid.Styles>
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Итог" Binding="{Binding Overall, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTemplateColumn Width="10" CanUserResize="False" CanUserSort="False">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{Binding Overall, Converter={StaticResource SevBrush}}" Width="6" HorizontalAlignment="Left"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Итог" Width="150">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{Binding Overall, Converter={StaticResource SevBrush}}" CornerRadius="4" Padding="8,2" HorizontalAlignment="Left">
+                                                <TextBlock Text="{Binding Overall, Converter={StaticResource SevText}}" FontWeight="SemiBold" Foreground="#1F2937"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="80"/>
                                 <DataGridTextColumn Header="Шифр" Binding="{Binding Cipher}" Width="240"/>
                                 <DataGridTextColumn Header="Акт" Binding="{Binding ActName}" Width="220"/>
-                                <DataGridTextColumn Header="Наименование" Binding="{Binding NameStatus, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTemplateColumn Header="Наименование" Width="140">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <local:CheckCell Status="{Binding NameStatus}" Tip="{Binding NameTip}"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="Файл" Binding="{Binding Presence}" Width="160"/>
-                                <DataGridTextColumn Header="Элемент РД" Binding="{Binding RdElementStatus, Converter={StaticResource SevText}}" Width="140"/>
-                                <DataGridTextColumn Header="Фамилии" Binding="{Binding SurnameStatus, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTemplateColumn Header="Элемент РД" Width="140">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <local:CheckCell Status="{Binding RdElementStatus}" Tip="{Binding ElementTip}"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Фамилии" Width="140">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <local:CheckCell Status="{Binding SurnameStatus}" Tip="{Binding SurnameTip}"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="В документе" Binding="{Binding Surnames}" Width="280"/>
                                 <DataGridTextColumn Header="Подписанты" Binding="{Binding Signers}" Width="280"/>
                             </DataGrid.Columns>
@@ -194,14 +353,24 @@
                         <DataGrid ItemsSource="{Binding FilteredFindings}" IsReadOnly="True" CanUserSortColumns="True"
                                   GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
                                   AutoGenerateColumns="False">
-                            <DataGrid.Styles>
-                                <Style Selector="DataGridRow">
-                                    <Setter Property="Background" Value="{Binding Severity, Converter={StaticResource SevBrush}}"/>
-                                </Style>
-                            </DataGrid.Styles>
                             <DataGrid.Columns>
+                                <DataGridTemplateColumn Width="10" CanUserResize="False" CanUserSort="False">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{Binding Severity, Converter={StaticResource SevBrush}}" Width="6" HorizontalAlignment="Left"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="Элемент" Binding="{Binding ElementNo}" Width="90"/>
-                                <DataGridTextColumn Header="Критичность" Binding="{Binding Severity, Converter={StaticResource SevText}}" Width="160"/>
+                                <DataGridTemplateColumn Header="Критичность" Width="150">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{Binding Severity, Converter={StaticResource SevBrush}}" CornerRadius="4" Padding="8,2" HorizontalAlignment="Left">
+                                                <TextBlock Text="{Binding Severity, Converter={StaticResource SevText}}" FontWeight="SemiBold"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="Что проверялось" Binding="{Binding CheckName}" Width="260"/>
                                 <DataGridTextColumn Header="В акте" Binding="{Binding InAct}" Width="220"/>
                                 <DataGridTextColumn Header="В РД" Binding="{Binding InRd}" Width="220"/>

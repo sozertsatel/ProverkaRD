@@ -84,9 +84,10 @@ public static class ReportWriter
         var rows = report.Acts
             .Select(act => (Act: act, Score: ActScore.Score(act, report.Findings, report.Kits)))
             .ToList();
-        var critical = rows.Sum(row => row.Score.Critical);
-        var formatting = rows.Sum(row => row.Score.Formatting);
-        var warnings = rows.Sum(row => row.Score.Warnings);
+        var loose = CountUnassigned(report);
+        var critical = rows.Sum(row => row.Score.Critical) + loose.Critical;
+        var formatting = rows.Sum(row => row.Score.Formatting) + loose.Formatting;
+        var warnings = rows.Sum(row => row.Score.Warnings) + loose.Warnings;
         sheet.Cell(2, 1).Value =
             "ВЭРД: " + (report.VerdFileName ?? "не загружена")
             + "    ВЭСР: " + (report.VesrFileName ?? "не загружена")
@@ -244,6 +245,26 @@ public static class ReportWriter
         Outline(sheet, groupRow, 16, blockEnd, 17);
         Outline(sheet, groupRow, 18, blockEnd, 20);
         Outline(sheet, groupRow, 21, blockEnd, 21);
+    }
+
+    private static (int Critical, int Formatting, int Warnings) CountUnassigned(CheckReport report)
+    {
+        var critical = 0;
+        var formatting = 0;
+        var warnings = 0;
+        foreach (var finding in report.Findings)
+        {
+            if (report.Acts.Any(act => ActScore.Concerns(act, finding)))
+                continue;
+            switch (finding.Severity)
+            {
+                case Severity.Critical: critical++; break;
+                case Severity.Formatting: formatting++; break;
+                case Severity.Warning: warnings++; break;
+            }
+        }
+
+        return (critical, formatting, warnings);
     }
 
     private static void WriteFindings(XLWorkbook workbook, CheckReport report, string? appVersion)
@@ -451,6 +472,7 @@ public static class ReportWriter
 
         cell.Value = value.Value;
         cell.Style.NumberFormat.Format = "0,00";
+        cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
     }
 
     private static void WriteCompared(IXLCell cell, string text, IReadOnlyList<string> peers)
@@ -506,6 +528,7 @@ public static class ReportWriter
         {
             cell.Value = money.Value;
             cell.Style.NumberFormat.Format = "#,##0.00";
+            cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Right;
             return;
         }
         cell.Value = text;

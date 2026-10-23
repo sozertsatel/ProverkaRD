@@ -117,7 +117,7 @@ public class RobustnessTests
             Assert.Contains(report.Notices, n => n.Source == "ВЭСР" && n.Message.Contains("Лист «ВЭ» не найден"));
             Assert.Contains(report.Notices, n => n.Message.Contains("Пропущена строка-номер"));
             Assert.Contains(report.Notices, n => n.Message.Contains("Повтор кода"));
-            Assert.Equal(40, report.Notices.Count(n => n.Message.Contains("Строка без кода элемента пропущена")));
+            Assert.Equal(40, report.Notices.Count(n => n.Message.Contains("примечание или текст")));
             Assert.Contains(report.Notices, n => n.Message.Contains("Ячейка не разобрана как сумма"));
             Assert.Contains(report.Notices, n => n.Message.Contains("Пропущен вспомогательный файл"));
             Assert.Contains(report.Notices, n => n.Message.Contains("Файл подписи не является комплектом"));
@@ -145,7 +145,7 @@ public class RobustnessTests
                 .ToList();
             Assert.Equal(report.Notices.Count, messages.Count);
             Assert.Contains(messages, message => message.Contains("Лист «ВЭ» не найден"));
-            Assert.Equal(40, messages.Count(message => message.Contains("Строка без кода элемента пропущена")));
+            Assert.Equal(40, messages.Count(message => message.Contains("примечание или текст")));
         }
         finally
         {
@@ -279,6 +279,96 @@ public class RobustnessTests
         Assert.Equal("#F8CBAD", SeverityPalette.For(Severity.Warning));
         Assert.Equal("#C6EFCE", SeverityPalette.For(Severity.Ok));
         Assert.Equal("Segoe UI", SeverityPalette.FontName);
+    }
+
+    [Fact]
+    public void Signature_table_stays_quiet_when_kits_and_costs_were_parsed()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-act-quiet");
+        var path = Path.Combine(dir.FullName, "РД 4.10.docx");
+        try
+        {
+            using (var doc = WordprocessingDocument.Create(path, WordprocessingDocumentType.Document))
+            {
+                var main = doc.AddMainDocumentPart();
+                main.Document = new Document(new Body(
+                    new Paragraph(new Run(new Text("АКТ № 4.10"))),
+                    Table(
+                        ["№ тома", "Шифр", "Наименование документа"],
+                        [["4.10.1.1.1 (4.10)", "100-20-3000-А-КМ1", "Конструкции"]]),
+                    Table(
+                        ["Наименование", "Стоимость без НДС", "НДС", "Стоимость с НДС"],
+                        [["4.10.1.1.1 Рабочая документация. Сооружения", "1000", "220", "1220"]]),
+                    Table(["Должность", "Подпись", "ФИО"], [["ГИП", "", "Фролов И.И."]])));
+                main.Document.Save();
+            }
+
+            var act = ActParser.Parse(path);
+            Assert.NotEmpty(act.Kits);
+            Assert.NotEmpty(act.CostLines);
+            Assert.DoesNotContain(act.Notices, notice => notice.Message.Contains("Таблица не разобрана"));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Skipped_ledger_rows_name_empty_total_text_or_non_numeric()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-row-reason");
+        try
+        {
+            var verd = Path.Combine(dir.FullName, "verd.xlsx");
+            using (var book = new XLWorkbook())
+            {
+                var sheet = book.AddWorksheet("База");
+                sheet.Cell(1, 1).Value = "Номер элемента";
+                sheet.Cell(1, 2).Value = "Наименование элемента";
+                sheet.Cell(1, 4).Value = "Шифр РД";
+                sheet.Cell(1, 5).Value = "Наименование документации";
+                sheet.Cell(2, 1).Value = "4.10";
+                sheet.Cell(2, 2).Value = "Сооружения";
+                sheet.Cell(2, 4).Value = "100-20-3000-А-КМ1";
+                sheet.Cell(2, 5).Value = "Конструкции";
+                sheet.Cell(3, 2).Value = "Итого по разделу";
+                sheet.Cell(4, 2).Value = "см. примечание";
+                sheet.Cell(5, 1).Value = "—";
+                sheet.Cell(6, 4).Value = "12--34";
+                book.SaveAs(verd);
+            }
+
+            var parsed = VerdParser.Parse(verd);
+            Assert.Contains(parsed.Notices, notice => notice.Message.Contains("строка-итог"));
+            Assert.Contains(parsed.Notices, notice => notice.Message.Contains("примечание или текст"));
+            Assert.Contains(parsed.Notices, notice => notice.Message.Contains("пустая строка"));
+            Assert.Contains(parsed.Notices, notice => notice.Message.Contains("нечисловое значение"));
+
+            var vesr = Path.Combine(dir.FullName, "vesr.xlsx");
+            using (var book = new XLWorkbook())
+            {
+                var sheet = book.AddWorksheet("ВЭ");
+                sheet.Cell(1, 1).Value = "№ Элемента";
+                sheet.Cell(1, 2).Value = "Наименование";
+                sheet.Cell(1, 6).Value = "Всего";
+                sheet.Cell(2, 1).Value = "4.10.1.1.1";
+                sheet.Cell(2, 2).Value = "Рабочая документация";
+                sheet.Cell(2, 6).Value = 10m;
+                sheet.Cell(3, 2).Value = "Итого";
+                sheet.Cell(4, 1).Value = "???";
+                book.SaveAs(vesr);
+            }
+
+            var costs = VesrParser.Parse(vesr);
+            Assert.Contains(costs.Notices, notice => notice.Message.Contains("строка-итог"));
+            Assert.Contains(costs.Notices, notice => notice.Message.Contains("нечисловое значение"));
+            Assert.True(costs.ByCode.ContainsKey(TextMatch.CodeKey("4.10.1.1.1")));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
     }
 
     private static string Nest(string root, string fileName)

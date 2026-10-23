@@ -37,5 +37,13 @@
         <Style Selector="Button.quiet">
             <Setter Property="Padding" Value="12,8"/>
         </Style>
+        <Style Selector="Button.onDark">
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="Foreground" Value="#1F4E79"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="BorderBrush" Value="#F4C7C3"/>
+            <Setter Property="Padding" Value="14,8"/>
+        </Style>
     </Application.Styles>
 </Application>

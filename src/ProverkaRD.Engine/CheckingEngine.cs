@@ -893,6 +893,22 @@ public sealed partial class CheckingEngine
         var element = elementNo.Length == 0
             ? elementName
             : elementName.Length == 0 ? elementNo : elementNo + " " + elementName;
+        if (RdFileRules.IsStray(rd))
+        {
+            return new RegistryRow
+            {
+                FileName = rd.FileName,
+                Cipher = rd.Cipher,
+                Element = element,
+                Surnames = string.Join(", ", rd.Surnames),
+                Signers = "—",
+                CertValidity = "—",
+                CertStatus = Severity.Ok,
+                SignatureStatus = Severity.Warning,
+                Overall = Severity.Warning,
+            };
+        }
+
         var signature = SignatureState(rd);
         var surnames = SurnameState(rd);
         var cert = rd.CertificateSigners.Count == 0 ? Severity.Ok : rd.CertStatus;

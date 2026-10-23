@@ -26,6 +26,29 @@ public sealed class SeverityBrushConverter : IValueConverter
         throw new NotSupportedException();
 }
 
+/// <summary>Цвет только у незачёта. У «ОК» ячейка остаётся без заливки.</summary>
+public sealed class FailBrushConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is Severity severity && severity != Severity.Ok
+            ? SeverityBrushConverter.Brush(severity)
+            : Brushes.Transparent;
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
+public sealed class MoneyTextConverter : IValueConverter
+{
+    private static readonly CultureInfo Ru = CultureInfo.GetCultureInfo("ru-RU");
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        value is decimal amount ? amount.ToString("N2", Ru) : "";
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}
+
 public sealed class StateBrushConverter : IValueConverter
 {
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>

@@ -71,7 +71,7 @@ public static partial class VerdParser
                 }
 
                 if (!startedElement && HasText(number, name, cipher, kitName, dgp, pd))
-                    book.Notices.Add(new Notice("ВЭРД", "строка " + r, "Строка не разобрана и не попала в ведомость."));
+                    book.Notices.Add(new Notice("ВЭРД", "строка " + r, RowSkip.Reason(number, name, cipher, kitName, dgp, pd)));
             }
         }
         catch (Exception ex)
@@ -196,8 +196,18 @@ public static partial class VesrParser
             {
                 var code = Text(sheet, r, cols.Code);
                 var name = Text(sheet, r, cols.Name);
-                if (code.Length == 0 && name.Length == 0)
+                var unitText = Text(sheet, r, cols.Unit);
+                var qtyText = cols.Qty > 0 ? Text(sheet, r, cols.Qty) : "";
+                var priceText = cols.Price > 0 ? Text(sheet, r, cols.Price) : "";
+                var totalText = cols.Total > 0 ? Text(sheet, r, cols.Total) : "";
+                if (code.Length == 0 && name.Length == 0 && unitText.Length == 0
+                    && qtyText.Length == 0 && priceText.Length == 0 && totalText.Length == 0)
                     continue;
+                if (code.Length == 0 && name.Length == 0)
+                {
+                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, RowSkip.Reason(code, name, unitText, qtyText, priceText, totalText)));
+                    continue;
+                }
                 if (code.Contains("элемент", StringComparison.OrdinalIgnoreCase))
                 {
                     book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Повтор шапки пропущен."));
@@ -210,7 +220,7 @@ public static partial class VesrParser
                 }
                 if (!StartsWithDigit().IsMatch(code))
                 {
-                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, "Строка без кода элемента пропущена."));
+                    book.Notices.Add(new Notice("ВЭСР", "строка " + r, RowSkip.Reason(code, name, unitText, qtyText, priceText, totalText)));
                     continue;
                 }
 
@@ -321,4 +331,31 @@ public static partial class VesrParser
 
     [GeneratedRegex(@"^\d")]
     private static partial Regex StartsWithDigit();
+}
+
+internal static class RowSkip
+{
+    internal static string Reason(params string[] cells)
+    {
+        var parts = cells
+            .Select(cell => (cell ?? "").Trim())
+            .Where(cell => cell.Length > 0 && !IsBlank(cell))
+            .ToList();
+        if (parts.Count == 0)
+            return "Пропущена пустая строка.";
+        var folded = TextMatch.Normalize(string.Join(' ', parts));
+        if (folded.Contains("итого", StringComparison.Ordinal)
+            || folded.Contains("всего", StringComparison.Ordinal)
+            || folded.Contains("промежуточ", StringComparison.Ordinal))
+            return "Пропущена строка-итог.";
+        if (parts.Any(part => part.Any(char.IsLetter)))
+            return "Пропущена строка: примечание или текст.";
+        return "Пропущена строка: нечисловое значение.";
+    }
+
+    private static bool IsBlank(string value)
+    {
+        var trimmed = value.Trim();
+        return trimmed is "-" or "—" or "–" or ".";
+    }
 }
