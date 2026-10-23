@@ -787,11 +787,19 @@ public class EngineRulesTests
     }
 
     [Fact]
-    public void Forced_update_installs_even_when_the_version_matches()
+    public void Same_version_is_not_reinstalled_until_the_extra_button()
     {
-        Assert.True(UpdateOffer.ShouldInstall(remoteIsNewer: false, force: true));
+        Assert.False(UpdateOffer.ShouldInstall(remoteIsNewer: false, force: true));
         Assert.False(UpdateOffer.ShouldInstall(remoteIsNewer: false, force: false));
         Assert.True(UpdateOffer.ShouldInstall(remoteIsNewer: true, force: false));
+        Assert.True(UpdateOffer.ShouldInstall(remoteIsNewer: true, force: true));
+        Assert.False(UpdateOffer.ShouldReinstallCurrent(confirmed: false));
+        Assert.True(UpdateOffer.ShouldReinstallCurrent(confirmed: true));
+        Assert.Equal("У вас актуальная версия", ReleaseVersion.CurrentText);
+        Assert.Equal("У вас актуальная версия (0.1.9)", ReleaseVersion.CurrentWithVersion("0.1.9"));
+        Assert.Equal("У вас актуальная версия (0.1.9)", ReleaseVersion.CurrentWithVersion("v0.1.9"));
+        Assert.Equal("У вас актуальная версия (0.1.9)", ReleaseVersion.CurrentWithVersion("0.1.9.0"));
+        Assert.Equal("У вас актуальная версия (0.1.9)", ReleaseVersion.CurrentWithVersion("0.1.9+6a65e3c3b4b2f551428b06eac071db0b0d1098d6"));
     }
 
     [Fact]
@@ -817,10 +825,10 @@ public class EngineRulesTests
         Assert.False(ReleaseVersion.IsNewer("v0.1.8", "0.1.8.0"));
         Assert.False(ReleaseVersion.IsNewer("v0.1.8", "0.1.8+6a65e3c3b4b2f551428b06eac071db0b0d1098d6"));
         Assert.False(ReleaseVersion.IsNewer("v0.1.7", "0.1.8.0"));
-        Assert.False(UpdateOffer.ShouldInstall(ReleaseVersion.IsNewer("v0.1.8", "0.1.8.0"), force: false));
+        Assert.False(UpdateOffer.ShouldInstall(ReleaseVersion.IsNewer("v0.1.8", "0.1.8.0"), force: true));
         Assert.False(UpdateOffer.ShouldInstall(ReleaseVersion.IsNewer("v0.1.8", "0.1.8+hash"), force: false));
-        Assert.True(UpdateOffer.ShouldInstall(ReleaseVersion.IsNewer("v0.1.8", "0.1.8"), force: true));
-        Assert.Equal("У вас последняя версия", ReleaseVersion.LatestInstalled);
+        Assert.Equal("У вас актуальная версия", ReleaseVersion.CurrentText);
+        Assert.Equal("У вас актуальная версия (0.1.8)", ReleaseVersion.CurrentWithVersion("0.1.8.0"));
     }
 
     [Fact]

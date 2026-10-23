@@ -8,7 +8,23 @@ namespace ProverkaRD.Engine;
 /// </summary>
 public static class ReleaseVersion
 {
-    public const string LatestInstalled = "У вас последняя версия";
+    public const string CurrentText = "У вас актуальная версия";
+
+    /// <summary>«У вас актуальная версия (0.1.9)». Хвост +hash и лишний .0 в скобки не попадают.</summary>
+    public static string CurrentWithVersion(string? installed)
+    {
+        var shown = Display(installed);
+        return shown.Length == 0 ? CurrentText : CurrentText + " (" + shown + ")";
+    }
+
+    public static string Display(string? text)
+    {
+        if (!TryParse(text, out var version))
+            return "";
+        if (version.Revision > 0)
+            return version.ToString();
+        return version.Major + "." + version.Minor + "." + version.Build;
+    }
 
     public static bool TryParse(string? text, out Version version)
     {

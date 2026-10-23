@@ -70,7 +70,7 @@ public static class UpdateChecker
             return new UpdateCheckResult(
                 UpdateCheckKind.UpToDate,
                 release.Tag,
-                ReleaseVersion.LatestInstalled,
+                ReleaseVersion.CurrentText,
                 release.Body,
                 page,
                 release.Exe?.Url,

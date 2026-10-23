@@ -284,12 +284,23 @@ public static class UpdateFlow
         }
 
         var newer = ReleaseVersion.IsNewer(result.RemoteTag, AppInfo.Version);
-        var install = UpdateOffer.ShouldInstall(newer, force);
-        if (!install)
+        var confirmedSame = false;
+        if (!UpdateOffer.ShouldInstall(newer, force))
         {
-            if (interactive)
-                await Tell(owner, ReleaseVersion.LatestInstalled, null);
-            return result with { Kind = UpdateCheckKind.UpToDate, Message = ReleaseVersion.LatestInstalled };
+            var plain = ReleaseVersion.CurrentText;
+            var withVersion = ReleaseVersion.CurrentWithVersion(AppInfo.Version);
+            if (force && interactive)
+            {
+                confirmedSame = await Tell(owner, withVersion, null, "Всё равно переустановить");
+                if (!UpdateOffer.ShouldReinstallCurrent(confirmedSame))
+                    return result with { Kind = UpdateCheckKind.UpToDate, Message = withVersion };
+            }
+            else
+            {
+                if (interactive)
+                    await Tell(owner, plain, null);
+                return result with { Kind = UpdateCheckKind.UpToDate, Message = plain };
+            }
         }
 
         if (result.Kind is not (UpdateCheckKind.Newer or UpdateCheckKind.UpToDate))
@@ -301,12 +312,15 @@ public static class UpdateFlow
             return result;
         }
 
-        var notes = string.IsNullOrWhiteSpace(result.Notes) ? "Описание релиза не заполнено." : result.Notes.Trim();
-        var update = force
-            ? await Ask(owner, "Переустановить версию " + result.RemoteTag + "?", notes, "Переустановить", "Отмена")
-            : await Ask(owner, "Доступна версия " + result.RemoteTag + ". Что нового:", notes, "Обновить", "Позже");
-        if (!update)
-            return result;
+        if (!confirmedSame)
+        {
+            var notes = string.IsNullOrWhiteSpace(result.Notes) ? "Описание релиза не заполнено." : result.Notes.Trim();
+            var update = force
+                ? await Ask(owner, "Переустановить версию " + result.RemoteTag + "?", notes, "Переустановить", "Отмена")
+                : await Ask(owner, "Доступна версия " + result.RemoteTag + ". Что нового:", notes, "Обновить", "Позже");
+            if (!update)
+                return result;
+        }
 
         string? downloaded = null;
         var keepDownload = false;
@@ -422,7 +436,7 @@ public static class UpdateFlow
         return chosen;
     }
 
-    private static async Task Tell(Window owner, string message, string? page)
+    private static async Task<bool> Tell(Window owner, string message, string? page, string? accept = null)
     {
         var panel = new StackPanel { Margin = new Avalonia.Thickness(20), Spacing = 12 };
         panel.Children.Add(new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap });
@@ -442,6 +456,7 @@ public static class UpdateFlow
             Background = Brushes.White,
             Content = panel,
         };
+        var chosen = false;
         if (!string.IsNullOrWhiteSpace(page))
         {
             var open = new Button { Content = "Открыть страницу релиза", Classes = { "primary" } };
@@ -454,11 +469,23 @@ public static class UpdateFlow
             buttons.Children.Add(open);
         }
 
+        if (!string.IsNullOrWhiteSpace(accept))
+        {
+            var again = new Button { Content = accept, Classes = { "accent" } };
+            again.Click += (_, _) =>
+            {
+                chosen = true;
+                dialog.Close();
+            };
+            buttons.Children.Add(again);
+        }
+
         var close = new Button { Content = "Закрыть" };
         close.Click += (_, _) => dialog.Close();
         buttons.Children.Add(close);
         panel.Children.Add(buttons);
         await dialog.ShowDialog(owner);
+        return chosen;
     }
 
     private static void TryDelete(string? path)
