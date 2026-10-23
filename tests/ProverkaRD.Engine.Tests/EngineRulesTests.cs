@@ -795,6 +795,35 @@ public class EngineRulesTests
     }
 
     [Fact]
+    public void Same_or_older_release_is_not_offered_after_version_normalization()
+    {
+        // У System.Version пропущенная 4-я цифра равна −1 и меньше нуля.
+        var threePart = new Version(0, 1, 8);
+        var fourPart = new Version(0, 1, 8, 0);
+        Assert.Equal(-1, threePart.Revision);
+        Assert.True(threePart < fourPart);
+        Assert.False(Version.TryParse("v0.1.8", out _));
+        Assert.False(Version.TryParse("0.1.8+6a65e3c3b4b2f551428b06eac071db0b0d1098d6", out _));
+
+        Assert.Equal(0, ReleaseVersion.Compare("v0.1.8", "0.1.8"));
+        Assert.Equal(0, ReleaseVersion.Compare("v0.1.8", "0.1.8.0"));
+        Assert.Equal(0, ReleaseVersion.Compare("v0.1.8.0", "0.1.8"));
+        Assert.Equal(0, ReleaseVersion.Compare("V0.1.8", "0.1.8.0+6a65e3c3b4b2f551428b06eac071db0b0d1098d6"));
+        Assert.Equal(0, ReleaseVersion.Compare("v0.1.8", "0.1.8+6a65e3c3b4b2f551428b06eac071db0b0d1098d6"));
+        Assert.True(ReleaseVersion.Compare("v0.1.7", "0.1.8") < 0);
+        Assert.True(ReleaseVersion.Compare("v0.1.9", "0.1.8+hash") > 0);
+
+        Assert.False(ReleaseVersion.IsNewer("v0.1.8", "0.1.8"));
+        Assert.False(ReleaseVersion.IsNewer("v0.1.8", "0.1.8.0"));
+        Assert.False(ReleaseVersion.IsNewer("v0.1.8", "0.1.8+6a65e3c3b4b2f551428b06eac071db0b0d1098d6"));
+        Assert.False(ReleaseVersion.IsNewer("v0.1.7", "0.1.8.0"));
+        Assert.False(UpdateOffer.ShouldInstall(ReleaseVersion.IsNewer("v0.1.8", "0.1.8.0"), force: false));
+        Assert.False(UpdateOffer.ShouldInstall(ReleaseVersion.IsNewer("v0.1.8", "0.1.8+hash"), force: false));
+        Assert.True(UpdateOffer.ShouldInstall(ReleaseVersion.IsNewer("v0.1.8", "0.1.8"), force: true));
+        Assert.Equal("У вас последняя версия", ReleaseVersion.LatestInstalled);
+    }
+
+    [Fact]
     public void Missing_volume_surname_is_critical_and_extra_signer_is_silent()
     {
         var missing = SignerAudit.Check(["Фролов", "Павлову"], ["Павлов", "Белкина"], true, null, []);
