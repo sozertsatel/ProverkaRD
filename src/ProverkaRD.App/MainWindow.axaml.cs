@@ -18,8 +18,7 @@ namespace ProverkaRD;
 public partial class MainWindow : Window
 {
     private readonly WorkspaceModel _model = new();
-    private readonly ListBox _rdList;
-    private readonly ListBox _actList;
+    private double _inputHeight = 240;
     private AppSettings _settings = AppSettings.Load();
 
     public MainWindow()
@@ -34,12 +33,12 @@ public partial class MainWindow : Window
         var versionText = this.FindControl<TextBlock>("VersionText");
         if (versionText is not null)
             versionText.Text = AppInfo.Version;
-        _rdList = this.FindControl<ListBox>("RdList") ?? throw new InvalidOperationException("Не найден список комплектов.");
-        _actList = this.FindControl<ListBox>("ActList") ?? throw new InvalidOperationException("Не найден список актов.");
         _model.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(WorkspaceModel.HasSelectedAct))
                 SyncActSplit();
+            if (args.PropertyName is nameof(WorkspaceModel.ListsOpen))
+                SyncInputSplit();
         };
         RestoreLedgers();
         Opened += (_, _) =>
@@ -83,12 +82,6 @@ public partial class MainWindow : Window
             _model.AddAct(folder);
     }
 
-    private void OnRemoveRd(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
-        _model.RemoveRd(_rdList.SelectedItems?.Cast<InputFile>().ToList() ?? []);
-
-    private void OnRemoveAct(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
-        _model.RemoveAct(_actList.SelectedItems?.Cast<InputFile>().ToList() ?? []);
-
     private void OnClearRd(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ClearRd();
     private void OnClearActs(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ActFiles.Clear();
 
@@ -120,6 +113,56 @@ public partial class MainWindow : Window
 
     private void OnToggleLists(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
         _model.ListsOpen = !_model.ListsOpen;
+
+    private void OnInputContext(object? sender, ContextRequestedEventArgs e)
+    {
+        var node = FindNode(e.Source);
+        if (node is null || node.Kind is not ("act" or "file") || string.IsNullOrWhiteSpace(node.Path))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        var item = new MenuItem { Header = "Удалить" };
+        item.Click += (_, _) => _model.RemoveOutlineNode(node.Kind, node.Path);
+        var menu = new ContextMenu { Items = { item } };
+        var target = e.Source as Control ?? this;
+        menu.Open(target);
+        e.Handled = true;
+    }
+
+    private static InputNode? FindNode(object? source)
+    {
+        var current = source as StyledElement;
+        while (current is not null)
+        {
+            if (current.DataContext is InputNode node)
+                return node;
+            current = current.Parent as StyledElement;
+        }
+
+        return null;
+    }
+
+    private void SyncInputSplit()
+    {
+        var grid = this.FindControl<Grid>("InputSplit");
+        if (grid is null || grid.RowDefinitions.Count < 3)
+            return;
+        if (!_model.ListsOpen)
+        {
+            if (grid.RowDefinitions[0].Height.GridUnitType == GridUnitType.Pixel && grid.RowDefinitions[0].Height.Value >= 120)
+                _inputHeight = grid.RowDefinitions[0].Height.Value;
+            grid.RowDefinitions[0].Height = GridLength.Auto;
+            grid.RowDefinitions[0].MinHeight = 0;
+            grid.RowDefinitions[1].Height = new GridLength(0);
+            return;
+        }
+
+        grid.RowDefinitions[1].Height = new GridLength(8);
+        grid.RowDefinitions[0].MinHeight = 160;
+        grid.RowDefinitions[0].Height = new GridLength(_inputHeight < 160 ? 240 : _inputHeight);
+    }
 
     private void OnFilterColumn(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
@@ -373,6 +416,18 @@ public sealed class InputFile
 {
     public required string Path { get; init; }
     public required string Caption { get; init; }
+    public bool HasSignature { get; init; }
+}
+
+public sealed class InputNode
+{
+    public required string Title { get; init; }
+    public required string Kind { get; init; }
+    public string Path { get; init; } = "";
+    public bool Problem { get; init; }
+    public bool Expand { get; init; }
+    public string Mark { get; init; } = "";
+    public ObservableCollection<InputNode> Children { get; init; } = [];
 }
 
 public sealed class WorkspaceModel : INotifyPropertyChanged
@@ -394,8 +449,9 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     private bool _showProgress;
     private CheckReport? _report;
     private ActResult? _selectedAct;
-    private bool _showPairing;
-    private int _pairingGeneration;
+    private int _outlineGeneration;
+    private string _outlineSummary = "Акты и комплекты не добавлены";
+    private readonly HashSet<string> _hiddenOutline = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, HashSet<string>> _columnFilters = new(StringComparer.Ordinal);
 
     public ObservableCollection<InputFile> RdFiles { get; } = [];
@@ -412,19 +468,24 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         RdFiles.CollectionChanged += (_, _) =>
         {
             Raise(nameof(RdEmpty));
+            Raise(nameof(RdCountText));
             Raise(nameof(ListsCaption));
-            SchedulePairing();
+            ScheduleOutline();
         };
         ActFiles.CollectionChanged += (_, _) =>
         {
             Raise(nameof(ActEmpty));
+            Raise(nameof(ActCountText));
             Raise(nameof(ListsCaption));
-            SchedulePairing();
+            ScheduleOutline();
         };
     }
 
-    public ObservableCollection<PairingLine> PairingLines { get; } = [];
-    public bool ShowPairing => _showPairing;
+    public ObservableCollection<InputNode> InputNodes { get; } = [];
+    public string OutlineSummary => _outlineSummary;
+    public bool OutlineEmpty => InputNodes.Count == 0;
+    public string ActCountText => InputOutline.CountPhrase(ActFiles.Count, "файл", "файла", "файлов");
+    public string RdCountText => InputOutline.CountPhrase(RdFiles.Count, "файл", "файла", "файлов");
 
     public string? VerdPath
     {
@@ -506,7 +567,9 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     }
 
     public string ListsCaption =>
-        (_listsOpen ? "▼" : "▶") + "   Акты: " + ActFiles.Count + "   ·   Комплекты: " + RdFiles.Count;
+        (_listsOpen ? "▼" : "▶") + "   " + (_listsOpen || _outlineSummary.Length == 0
+            ? "Акты: " + ActFiles.Count + "   ·   Комплекты: " + RdFiles.Count
+            : _outlineSummary);
 
     public ActResult? SelectedAct
     {
@@ -619,32 +682,50 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
 
         var added = AddPath(path, RdFiles, [".pdf", ".docx"], withSignature: true);
         if (folder && added == 0)
-            MarkEmptyFolder("В папке нет комплектов РД (PDF или DOCX). Файлы .СВОР и _ИЗМ в список не попадают.");
+        {
+            MarkEmptyFolder("В папке нет комплектов РД (PDF или DOCX).");
+            ScheduleOutline();
+        }
     }
 
     public void ClearRd()
     {
+        _hiddenOutline.Clear();
         RdFiles.Clear();
         RdFolders.Clear();
     }
+
+    public void RemoveOutlineNode(string kind, string path)
+    {
+        if (kind == "act")
+        {
+            foreach (var item in ActFiles.Where(file => SamePath(file.Path, path)).ToList())
+                ActFiles.Remove(item);
+            return;
+        }
+
+        if (kind != "file" || string.IsNullOrWhiteSpace(path))
+            return;
+        _hiddenOutline.Add(path);
+        var hits = RdFiles.Where(file => SamePath(file.Path, path)).ToList();
+        if (hits.Count == 0)
+        {
+            ScheduleOutline();
+            return;
+        }
+
+        foreach (var item in hits)
+            RdFiles.Remove(item);
+    }
+
+    private static bool SamePath(string left, string right) =>
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
     public void AddAct(string path)
     {
         var folder = Directory.Exists(path);
         var added = AddPath(path, ActFiles, [".docx"], withSignature: false);
         if (folder && added == 0)
             MarkEmptyFolder("В папке нет актов (DOCX).");
-    }
-
-    public void RemoveRd(IReadOnlyList<InputFile> items)
-    {
-        foreach (var item in items)
-            RdFiles.Remove(item);
-    }
-
-    public void RemoveAct(IReadOnlyList<InputFile> items)
-    {
-        foreach (var item in items)
-            ActFiles.Remove(item);
     }
 
     public CheckOptions Options { get; set; } = new();
@@ -797,7 +878,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         return target.Count - before;
     }
 
-    private static void TryAddFile(string path, ObservableCollection<InputFile> target, string[] extensions, bool withSignature)
+    private void TryAddFile(string path, ObservableCollection<InputFile> target, string[] extensions, bool withSignature)
     {
         var name = Path.GetFileName(path);
         if (name.StartsWith("~$", StringComparison.Ordinal) || name.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
@@ -806,15 +887,13 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
             return;
         if (target.Any(f => string.Equals(f.Path, path, StringComparison.OrdinalIgnoreCase)))
             return;
-        var caption = name;
         if (RdFileRules.IsAuxiliary(path))
             return;
+        _hiddenOutline.Remove(path);
+        var hasSignature = false;
         if (withSignature)
-        {
-            var sig = SignatureParser.FindSignature(path);
-            caption += sig is null ? "  ·  нет .sig" : "  ·  подпись рядом";
-        }
-        target.Add(new InputFile { Path = path, Caption = caption });
+            hasSignature = SignatureParser.FindSignature(path) is not null;
+        target.Add(new InputFile { Path = path, Caption = name, HasSignature = hasSignature });
     }
 
     public IReadOnlyList<string> DistinctColumnValues(string key)
@@ -863,39 +942,85 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         return selected.Contains(value?.Trim() ?? "");
     }
 
-    private void SchedulePairing()
+    private void ScheduleOutline()
     {
-        var generation = Interlocked.Increment(ref _pairingGeneration);
+        var generation = Interlocked.Increment(ref _outlineGeneration);
         var actPaths = ActFiles.Select(file => file.Path).ToList();
-        var rdPaths = RdFiles.Select(file => file.Path).ToList();
+        var files = CollectOutlineFiles();
         _ = Task.Run(async () =>
         {
             await Task.Delay(250);
-            if (generation != Volatile.Read(ref _pairingGeneration))
+            if (generation != Volatile.Read(ref _outlineGeneration))
                 return;
-            ActSetPreview.Result? preview = null;
-            if (actPaths.Count > 0 || rdPaths.Count > 0)
+            InputOutline.Model? model = null;
+            if (actPaths.Count > 0 || files.Count > 0)
             {
                 try
                 {
-                    preview = BuildPairing(actPaths, rdPaths);
+                    model = BuildOutline(actPaths, files);
                 }
                 catch (Exception ex)
                 {
-                    RunLog.Error("Акт ↔ комплекты", ex);
+                    RunLog.Error("Список файлов", ex);
                 }
             }
 
             Dispatcher.UIThread.Post(() =>
             {
-                if (generation != Volatile.Read(ref _pairingGeneration))
+                if (generation != Volatile.Read(ref _outlineGeneration))
                     return;
-                ApplyPairing(preview);
+                ApplyOutline(model);
             });
         });
     }
 
-    private static ActSetPreview.Result BuildPairing(List<string> actPaths, List<string> rdPaths)
+    private List<InputOutline.FileEntry> CollectOutlineFiles()
+    {
+        var files = new List<InputOutline.FileEntry>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in RdFiles)
+        {
+            if (_hiddenOutline.Contains(file.Path) || !seen.Add(file.Path))
+                continue;
+            files.Add(new InputOutline.FileEntry(file.Path, file.HasSignature));
+        }
+
+        foreach (var folder in RdFolders)
+            AddAuxiliary(folder, recursive: true, files, seen);
+        foreach (var file in RdFiles)
+        {
+            var parent = Path.GetDirectoryName(file.Path);
+            if (!string.IsNullOrEmpty(parent))
+                AddAuxiliary(parent, recursive: false, files, seen);
+        }
+
+        return files;
+    }
+
+    private void AddAuxiliary(string directory, bool recursive, List<InputOutline.FileEntry> files, HashSet<string> seen)
+    {
+        var root = SafePath.ForIo(directory);
+        if (!Directory.Exists(root))
+            return;
+        IEnumerable<string> found;
+        try
+        {
+            found = Directory.EnumerateFiles(root, "*", recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
+        }
+        catch (Exception)
+        {
+            return;
+        }
+
+        foreach (var path in found)
+        {
+            if (!RdFileRules.IsAuxiliary(path) || _hiddenOutline.Contains(path) || !seen.Add(path))
+                continue;
+            files.Add(new InputOutline.FileEntry(path, false));
+        }
+    }
+
+    private static InputOutline.Model BuildOutline(List<string> actPaths, List<InputOutline.FileEntry> files)
     {
         var acts = new List<ActDocument>(actPaths.Count);
         foreach (var path in actPaths)
@@ -910,34 +1035,47 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
             }
         }
 
-        return ActSetPreview.Build(acts, rdPaths);
+        return InputOutline.Build(acts, files);
     }
 
-    private void ApplyPairing(ActSetPreview.Result? preview)
+    private void ApplyOutline(InputOutline.Model? model)
     {
-        PairingLines.Clear();
-        if (preview is not null)
+        InputNodes.Clear();
+        if (model is not null)
         {
-            foreach (var line in preview.Lines)
-                PairingLines.Add(new PairingLine { Text = line.Text, Missing = line.Missing });
-            foreach (var extra in preview.Unmatched)
-                PairingLines.Add(new PairingLine { Text = extra, Missing = true });
+            foreach (var node in model.Nodes)
+                InputNodes.Add(MapNode(node));
         }
 
-        var show = PairingLines.Count > 0;
-        if (show == _showPairing)
-            return;
-        _showPairing = show;
-        Raise(nameof(ShowPairing));
+        var summary = model?.Summary ?? "Акты и комплекты не добавлены";
+        if (!string.Equals(summary, _outlineSummary, StringComparison.Ordinal))
+        {
+            _outlineSummary = summary;
+            Raise(nameof(OutlineSummary));
+            Raise(nameof(ListsCaption));
+        }
+
+        Raise(nameof(OutlineEmpty));
+    }
+
+    private static InputNode MapNode(InputOutline.Node node)
+    {
+        var mapped = new InputNode
+        {
+            Title = node.Title,
+            Kind = node.Kind,
+            Path = node.Path,
+            Problem = node.Problem,
+            Expand = node.Expand,
+            Mark = node.Kind == "act" && !node.Problem ? "✓" : "",
+            Children = [],
+        };
+        foreach (var child in node.Children)
+            mapped.Children.Add(MapNode(child));
+        return mapped;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
     private void Raise([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-}
-
-public sealed class PairingLine
-{
-    public required string Text { get; init; }
-    public bool Missing { get; init; }
 }

@@ -53,7 +53,7 @@
                         <Image Width="44" Height="44" Source="avares://ProverkaRD/Assets/rd.png"/>
                     </Border>
                     <TextBlock x:Name="ProductTitle" Text="РД Контроль" FontSize="28" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="VersionText" Text="0.1.5" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="VersionText" Text="0.1.6" FontSize="16" Foreground="#D6E3F0" VerticalAlignment="Center"/>
                 </StackPanel>
                 <Button Grid.Column="1" Classes="onDark" Click="OnSettings" VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal" Spacing="8">
@@ -104,91 +104,65 @@
             <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap"/>
         </Border>
 
-        <Grid Margin="16" RowDefinitions="Auto,Auto,*">
-            <Border Background="White" CornerRadius="10" BorderBrush="#E2E7EE" BorderThickness="1" VerticalAlignment="Top">
-                <StackPanel>
-                    <Grid ColumnDefinitions="*,*" MinHeight="36" ToolTip.Tip="Показать или скрыть списки файлов">
-                        <Button Grid.Column="0" Classes="listBar" Click="OnToggleLists"
-                                DragDrop.AllowDrop="True" DragDrop.Drop="OnActDrop"/>
-                        <Button Grid.Column="1" Classes="listBar" Click="OnToggleLists"
-                                DragDrop.AllowDrop="True" DragDrop.Drop="OnRdDrop"/>
-                        <TextBlock Grid.ColumnSpan="2" IsHitTestVisible="False" Margin="14,0" VerticalAlignment="Center"
-                                   FontWeight="SemiBold" Foreground="#1F4E79" Text="{Binding ListsCaption}"/>
-                    </Grid>
-                    <Grid ColumnDefinitions="*,*" IsVisible="{Binding ListsOpen}">
-                        <Border Padding="12,4,12,12" DragDrop.AllowDrop="True" DragDrop.Drop="OnActDrop">
-                            <DockPanel>
-                                <StackPanel DockPanel.Dock="Top" Spacing="8">
-                                    <TextBlock Text="Акты сдачи-приёмки" FontWeight="SemiBold" FontSize="16"/>
-                                    <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
-                                               Text="DOCX. Номер элемента читается из имени файла, строки «АКТ №» и скобок в «№ тома»."/>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Button Classes="quiet" Content="Файлы" Click="OnAddActFiles" IsEnabled="{Binding CanRun}"/>
-                                        <Button Classes="quiet" Content="Папка" Click="OnAddActFolder" IsEnabled="{Binding CanRun}"/>
-                                        <Button Classes="quiet" Content="Удалить" Click="OnRemoveAct" IsEnabled="{Binding CanRun}"/>
-                                        <Button Classes="quiet" Content="Очистить" Click="OnClearActs" IsEnabled="{Binding CanRun}"/>
-                                    </StackPanel>
+        <Grid x:Name="InputSplit" Margin="16" RowDefinitions="240,8,*">
+            <Border Grid.Row="0" Background="White" CornerRadius="10" BorderBrush="#E2E7EE" BorderThickness="1">
+                <DockPanel>
+                    <Button DockPanel.Dock="Top" Classes="listBar" Click="OnToggleLists"
+                            HorizontalContentAlignment="Left" Padding="14,0"
+                            Content="{Binding ListsCaption}"
+                            ToolTip.Tip="Показать или скрыть акты и комплекты"/>
+                    <StackPanel DockPanel.Dock="Top" IsVisible="{Binding ListsOpen}" Spacing="8" Margin="12,8,12,0">
+                        <Border Background="#F7F9FC" BorderBrush="#E2E7EE" BorderThickness="1" CornerRadius="8" Padding="10,6"
+                                DragDrop.AllowDrop="True" DragDrop.DragOver="OnExcelDragOver" DragDrop.Drop="OnActDrop">
+                            <Grid ColumnDefinitions="120,Auto,*,Auto">
+                                <TextBlock Text="Акты" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                    <Button Classes="quiet" Content="Файлы" Click="OnAddActFiles" IsEnabled="{Binding CanRun}"/>
+                                    <Button Classes="quiet" Content="Папка" Click="OnAddActFolder" IsEnabled="{Binding CanRun}"/>
+                                    <Button Classes="quiet" Content="Очистить" Click="OnClearActs" IsEnabled="{Binding CanRun}"/>
                                 </StackPanel>
-                                <Panel Margin="0,8,0,0">
-                                    <ListBox x:Name="ActList" ItemsSource="{Binding ActFiles}" MaxHeight="140" MinHeight="72">
-                                        <ListBox.ItemTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
-                                            </DataTemplate>
-                                        </ListBox.ItemTemplate>
-                                    </ListBox>
-                                    <TextBlock IsVisible="{Binding ActEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
-                                               Text="Перетащите сюда акты или выберите файлы и папку."/>
-                                </Panel>
-                            </DockPanel>
+                                <TextBlock Grid.Column="3" Text="{Binding ActCountText}" VerticalAlignment="Center" Foreground="#5C6B7A"/>
+                            </Grid>
                         </Border>
-                        <Border Grid.Column="1" Padding="12,4,12,12" BorderBrush="#E2E7EE" BorderThickness="1,0,0,0"
-                                DragDrop.AllowDrop="True" DragDrop.Drop="OnRdDrop">
-                            <DockPanel>
-                                <StackPanel DockPanel.Dock="Top" Spacing="8">
-                                    <TextBlock Text="Комплекты РД" FontWeight="SemiBold" FontSize="16"/>
-                                    <TextBlock Foreground="#5C6B7A" TextWrapping="Wrap" FontSize="12"
-                                               Text="PDF и DOCX. Подпись .sig подхватывается рядом с файлом и в список отдельно не попадает."/>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Button Classes="quiet" Content="Файлы" Click="OnAddRdFiles" IsEnabled="{Binding CanRun}"/>
-                                        <Button Classes="quiet" Content="Папка" Click="OnAddRdFolder" IsEnabled="{Binding CanRun}"/>
-                                        <Button Classes="quiet" Content="Удалить" Click="OnRemoveRd" IsEnabled="{Binding CanRun}"/>
-                                        <Button Classes="quiet" Content="Очистить" Click="OnClearRd" IsEnabled="{Binding CanRun}"/>
-                                    </StackPanel>
+                        <Border Background="#F7F9FC" BorderBrush="#E2E7EE" BorderThickness="1" CornerRadius="8" Padding="10,6"
+                                DragDrop.AllowDrop="True" DragDrop.DragOver="OnExcelDragOver" DragDrop.Drop="OnRdDrop">
+                            <Grid ColumnDefinitions="120,Auto,*,Auto">
+                                <TextBlock Text="Комплекты РД" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                    <Button Classes="quiet" Content="Файлы" Click="OnAddRdFiles" IsEnabled="{Binding CanRun}"/>
+                                    <Button Classes="quiet" Content="Папка" Click="OnAddRdFolder" IsEnabled="{Binding CanRun}"/>
+                                    <Button Classes="quiet" Content="Очистить" Click="OnClearRd" IsEnabled="{Binding CanRun}"/>
                                 </StackPanel>
-                                <Panel Margin="0,8,0,0">
-                                    <ListBox x:Name="RdList" ItemsSource="{Binding RdFiles}" MaxHeight="140" MinHeight="72">
-                                        <ListBox.ItemTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding Caption}" TextWrapping="Wrap"/>
-                                            </DataTemplate>
-                                        </ListBox.ItemTemplate>
-                                    </ListBox>
-                                    <TextBlock IsVisible="{Binding RdEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794" TextWrapping="Wrap"
-                                               Text="Перетащите сюда комплекты или выберите файлы и папку."/>
-                                </Panel>
-                            </DockPanel>
+                                <TextBlock Grid.Column="3" Text="{Binding RdCountText}" VerticalAlignment="Center" Foreground="#5C6B7A"/>
+                            </Grid>
                         </Border>
-                    </Grid>
-                </StackPanel>
+                        <TextBlock Text="{Binding OutlineSummary}" FontWeight="SemiBold" Foreground="#1F4E79" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <Panel IsVisible="{Binding ListsOpen}" Margin="8,4,8,8">
+                        <TreeView x:Name="InputTree" ItemsSource="{Binding InputNodes}" ContextRequested="OnInputContext">
+                            <TreeView.Styles>
+                                <Style Selector="TreeViewItem">
+                                    <Setter Property="IsExpanded" Value="{Binding Expand}"/>
+                                </Style>
+                            </TreeView.Styles>
+                            <TreeView.DataTemplates>
+                                <TreeDataTemplate DataType="local:InputNode" ItemsSource="{Binding Children}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="{Binding Mark}" FontWeight="Bold" Foreground="#15803D" Width="16"/>
+                                        <TextBlock Text="{Binding Title}" TextWrapping="Wrap"
+                                                   Foreground="{Binding Problem, Converter={StaticResource MissingBrush}}"/>
+                                    </StackPanel>
+                                </TreeDataTemplate>
+                            </TreeView.DataTemplates>
+                        </TreeView>
+                        <TextBlock IsVisible="{Binding OutlineEmpty}" IsHitTestVisible="False" Margin="8" Foreground="#7A8794"
+                                   Text="Перетащите акты и комплекты на строки выше."/>
+                    </Panel>
+                </DockPanel>
             </Border>
-
-            <Border Grid.Row="1" Margin="0,8,0,0" Padding="12,8" Background="White" CornerRadius="10"
-                    BorderBrush="#E2E7EE" BorderThickness="1" IsVisible="{Binding ShowPairing}">
-                <StackPanel Spacing="2">
-                    <TextBlock Text="Акт ↔ комплекты" FontWeight="SemiBold" Foreground="#1F4E79"/>
-                    <ItemsControl ItemsSource="{Binding PairingLines}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap"
-                                           Foreground="{Binding Missing, Converter={StaticResource MissingBrush}}"/>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </StackPanel>
-            </Border>
-
-            <Grid Grid.Row="2" Margin="0,12,0,0" RowDefinitions="Auto,*">
+            <GridSplitter Grid.Row="1" Height="8" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          ResizeDirection="Rows" Background="#D5DDE8" IsVisible="{Binding ListsOpen}"/>
+            <Grid Grid.Row="2" RowDefinitions="Auto,*">
                 <Grid ColumnDefinitions="*,Auto">
                     <TextBox PlaceholderText="Фильтр по акту, шифру или тексту" Text="{Binding FilterText}" Width="320" HorizontalAlignment="Left"/>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
