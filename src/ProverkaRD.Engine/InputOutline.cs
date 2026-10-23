@@ -23,6 +23,42 @@ public static partial class InputOutline
 
     public sealed record Model(string Summary, IReadOnlyList<Node> Nodes);
 
+    /// <summary>
+    /// Файлы дерева: переданные комплекты плюс .СВОР и _ИЗМ из папок и из каталога каждого файла.
+    /// Пустые списки ничего с диска не подхватывают — «Очистить» поэтому убирает и «Без акта».
+    /// </summary>
+    public static IReadOnlyList<FileEntry> Discover(
+        IEnumerable<FileEntry> files,
+        IEnumerable<string> folders,
+        IEnumerable<string>? hidden = null)
+    {
+        var skip = new HashSet<string>(hidden ?? [], StringComparer.OrdinalIgnoreCase);
+        var result = new List<FileEntry>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var listed = files.Where(file => !string.IsNullOrWhiteSpace(file.Path)).ToList();
+        foreach (var file in listed)
+        {
+            if (skip.Contains(file.Path) || !seen.Add(file.Path))
+                continue;
+            result.Add(file);
+        }
+
+        foreach (var folder in folders)
+        {
+            if (!string.IsNullOrWhiteSpace(folder))
+                AddAuxiliary(folder, recursive: true, result, seen, skip);
+        }
+
+        foreach (var file in listed)
+        {
+            var parent = Path.GetDirectoryName(file.Path);
+            if (!string.IsNullOrEmpty(parent))
+                AddAuxiliary(parent, recursive: false, result, seen, skip);
+        }
+
+        return result;
+    }
+
     public static Model Build(IReadOnlyList<ActDocument> acts, IReadOnlyList<FileEntry> files)
     {
         var described = acts.Select(Describe).ToList();
@@ -166,6 +202,34 @@ public static partial class InputOutline
             file.HasSignature,
             auxiliary,
             name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void AddAuxiliary(
+        string directory,
+        bool recursive,
+        List<FileEntry> files,
+        HashSet<string> seen,
+        HashSet<string> skip)
+    {
+        var root = SafePath.ForIo(directory);
+        if (!Directory.Exists(root))
+            return;
+        IEnumerable<string> found;
+        try
+        {
+            found = Directory.EnumerateFiles(root, "*", recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
+        }
+        catch (Exception)
+        {
+            return;
+        }
+
+        foreach (var path in found)
+        {
+            if (!RdFileRules.IsAuxiliary(path) || skip.Contains(path) || !seen.Add(path))
+                continue;
+            files.Add(new FileEntry(path, false));
+        }
     }
 
     private static string ElementFolder(string path)

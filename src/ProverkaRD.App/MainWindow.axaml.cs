@@ -83,7 +83,7 @@ public partial class MainWindow : Window
     }
 
     private void OnClearRd(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ClearRd();
-    private void OnClearActs(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ActFiles.Clear();
+    private void OnClearActs(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ClearActs();
 
     private void OnRdDrop(object? sender, DragEventArgs e)
     {
@@ -450,6 +450,7 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     private CheckReport? _report;
     private ActResult? _selectedAct;
     private int _outlineGeneration;
+    private bool _outlineQuiet;
     private string _outlineSummary = "Акты и комплекты не добавлены";
     private readonly HashSet<string> _hiddenOutline = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, HashSet<string>> _columnFilters = new(StringComparer.Ordinal);
@@ -470,14 +471,16 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
             Raise(nameof(RdEmpty));
             Raise(nameof(RdCountText));
             Raise(nameof(ListsCaption));
-            ScheduleOutline();
+            if (!_outlineQuiet)
+                ScheduleOutline();
         };
         ActFiles.CollectionChanged += (_, _) =>
         {
             Raise(nameof(ActEmpty));
             Raise(nameof(ActCountText));
             Raise(nameof(ListsCaption));
-            ScheduleOutline();
+            if (!_outlineQuiet)
+                ScheduleOutline();
         };
     }
 
@@ -691,8 +694,28 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     public void ClearRd()
     {
         _hiddenOutline.Clear();
-        RdFiles.Clear();
         RdFolders.Clear();
+        Quiet(() => RdFiles.Clear());
+        RefreshOutlineNow();
+    }
+
+    public void ClearActs()
+    {
+        Quiet(() => ActFiles.Clear());
+        RefreshOutlineNow();
+    }
+
+    private void Quiet(Action change)
+    {
+        _outlineQuiet = true;
+        try
+        {
+            change();
+        }
+        finally
+        {
+            _outlineQuiet = false;
+        }
     }
 
     public void RemoveOutlineNode(string kind, string path)
@@ -974,50 +997,33 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         });
     }
 
-    private List<InputOutline.FileEntry> CollectOutlineFiles()
+    private List<InputOutline.FileEntry> CollectOutlineFiles() =>
+        InputOutline.Discover(
+            RdFiles.Select(file => new InputOutline.FileEntry(file.Path, file.HasSignature)),
+            RdFolders,
+            _hiddenOutline).ToList();
+
+    private void RefreshOutlineNow()
     {
-        var files = new List<InputOutline.FileEntry>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var file in RdFiles)
+        var generation = Interlocked.Increment(ref _outlineGeneration);
+        var actPaths = ActFiles.Select(file => file.Path).ToList();
+        var files = CollectOutlineFiles();
+        InputOutline.Model? model = null;
+        if (actPaths.Count > 0 || files.Count > 0)
         {
-            if (_hiddenOutline.Contains(file.Path) || !seen.Add(file.Path))
-                continue;
-            files.Add(new InputOutline.FileEntry(file.Path, file.HasSignature));
+            try
+            {
+                model = BuildOutline(actPaths, files);
+            }
+            catch (Exception ex)
+            {
+                RunLog.Error("Список файлов", ex);
+            }
         }
 
-        foreach (var folder in RdFolders)
-            AddAuxiliary(folder, recursive: true, files, seen);
-        foreach (var file in RdFiles)
-        {
-            var parent = Path.GetDirectoryName(file.Path);
-            if (!string.IsNullOrEmpty(parent))
-                AddAuxiliary(parent, recursive: false, files, seen);
-        }
-
-        return files;
-    }
-
-    private void AddAuxiliary(string directory, bool recursive, List<InputOutline.FileEntry> files, HashSet<string> seen)
-    {
-        var root = SafePath.ForIo(directory);
-        if (!Directory.Exists(root))
+        if (generation != Volatile.Read(ref _outlineGeneration))
             return;
-        IEnumerable<string> found;
-        try
-        {
-            found = Directory.EnumerateFiles(root, "*", recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
-        }
-        catch (Exception)
-        {
-            return;
-        }
-
-        foreach (var path in found)
-        {
-            if (!RdFileRules.IsAuxiliary(path) || _hiddenOutline.Contains(path) || !seen.Add(path))
-                continue;
-            files.Add(new InputOutline.FileEntry(path, false));
-        }
+        ApplyOutline(model);
     }
 
     private static InputOutline.Model BuildOutline(List<string> actPaths, List<InputOutline.FileEntry> files)

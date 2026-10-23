@@ -76,6 +76,66 @@ public class InputOutlineTests
         Assert.DoesNotContain(orphan.Children, node => node.Title.Contains("том.pdf", StringComparison.Ordinal) || node.Title.Contains("НС1", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Clearing_the_file_lists_drops_unmatched_pdfs_still_on_disk()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "proverkard-clear-" + Guid.NewGuid().ToString("N"));
+        var element = Path.Combine(root, "7.29");
+        Directory.CreateDirectory(element);
+        var letter = Path.Combine(root, "письмо.pdf");
+        var svor = Path.Combine(element, "том.СВОР.pdf");
+        File.WriteAllBytes(letter, []);
+        File.WriteAllBytes(svor, []);
+        try
+        {
+            var loaded = InputOutline.Discover(
+                [new InputOutline.FileEntry(letter, false)],
+                [root]);
+            Assert.Contains(loaded, file => Same(file.Path, letter));
+            Assert.Contains(loaded, file => Same(file.Path, svor));
+
+            var before = InputOutline.Build([], loaded);
+            var orphan = Assert.Single(before.Nodes, node => node.Title == InputOutline.OrphanTitle);
+            Assert.Equal(2, orphan.Children.Count);
+            Assert.Equal("Акты не добавлены, 2 файла без акта", before.Summary);
+
+            var folderOnly = InputOutline.Discover([], [root]);
+            Assert.Contains(folderOnly, file => Same(file.Path, svor));
+            Assert.DoesNotContain(folderOnly, file => Same(file.Path, letter));
+
+            var cleared = InputOutline.Discover([], []);
+            Assert.Empty(cleared);
+            Assert.True(File.Exists(letter));
+            Assert.True(File.Exists(svor));
+
+            var empty = InputOutline.Build([], cleared);
+            Assert.Empty(empty.Nodes);
+            Assert.DoesNotContain(empty.Nodes, node => node.Title == InputOutline.OrphanTitle);
+            Assert.Equal("Акты и комплекты не добавлены", empty.Summary);
+
+            var act = new ActDocument
+            {
+                FilePath = Path.Combine(root, "РД 7.29.docx"),
+                ElementNoFromFileName = "7.29",
+                Kits = [new ActKit { Cipher = "000-00-0000-А-НС1", ElementNo = "7.29" }],
+            };
+            var actsLeft = InputOutline.Build([act], cleared);
+            Assert.Single(actsLeft.Nodes);
+            Assert.Equal("act", actsLeft.Nodes[0].Kind);
+            Assert.Contains("комплекты не добавлены", actsLeft.Nodes[0].Title);
+            Assert.DoesNotContain(actsLeft.Nodes, node => node.Title == InputOutline.OrphanTitle);
+            Assert.Equal("1 акт, 1 без комплекта", actsLeft.Summary);
+            Assert.DoesNotContain("файл без акта", actsLeft.Summary);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static bool Same(string left, string right) =>
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
     [Theory]
     [InlineData(17, 0, 1, "17 актов, все с комплектами ✓, 1 файл без акта")]
     [InlineData(1, 0, 0, "1 акт, все с комплектами ✓")]
