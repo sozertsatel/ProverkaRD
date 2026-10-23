@@ -39,6 +39,13 @@ public static partial class RdParser
 
     public static RdDocument Parse(string path)
     {
+        var draft = ReadDraft(path);
+        var facts = draft.Stray ? SignatureFacts.None : ReadSignature(path);
+        return Assemble(draft, facts);
+    }
+
+    internal static RdDraft ReadDraft(string path)
+    {
         var errors = new List<string>();
         var notices = new List<Notice>();
         var cipherFromName = FirstCipher(Path.GetFileNameWithoutExtension(path));
@@ -68,74 +75,100 @@ public static partial class RdParser
         var title = ExtractTitle(titleText);
         if (title.Cipher is null)
             title = ExtractTitle(fullText);
-        var stray = string.IsNullOrWhiteSpace(cipherFromName) && string.IsNullOrWhiteSpace(title.Cipher);
-        string? signaturePath = null;
-        IReadOnlyList<string> signers = [];
-        IReadOnlyList<CertificateSigner> certificateSigners = [];
-        var certStatus = Severity.Ok;
-        var certText = "";
-        string? signatureError = null;
-        var parsed = false;
-        var signatureNameDiffers = false;
-        var signatureRejected = false;
-        string? rejectedSignatureName = null;
-        string? coveringSignatureName = null;
-        if (!stray)
-        {
-        try
-        {
-            var located = SignatureParser.Locate(path);
-            if (located is not null)
-            {
-                signatureNameDiffers = located.Value.NameDiffers;
-                signatureRejected = located.Value.ExactRejected;
-                rejectedSignatureName = located.Value.ExactName;
-                coveringSignatureName = located.Value.CoveringName;
-                var readSigners = coveringSignatureName is not null || !signatureRejected;
-                if (readSigners)
-                {
-                    signaturePath = located.Value.Path;
-                    var read = SignatureParser.Read(signaturePath);
-                    signers = DistinctSurnames(read.Surnames);
-                    certificateSigners = read.People;
-                    certStatus = read.CertStatus;
-                    certText = read.CertValidityText;
-                    signatureError = read.Error;
-                    parsed = read.Error is null;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            signatureError = ex.Message;
-        }
-        }
-
-        surnames = ConfirmCoordinateSurnames(surnames, coordinateBare, adjectiveBare, signers, certificateSigners);
-        var cipher = title.Cipher ?? cipherFromName ?? "";
-        return new RdDocument
+        return new RdDraft
         {
             FilePath = path,
             CipherFromFileName = cipherFromName,
             CipherFromText = title.Cipher,
-            Cipher = cipher,
+            Cipher = title.Cipher ?? cipherFromName ?? "",
             KitName = title.KitName,
             ElementNo = title.ElementNo,
             ElementName = title.ElementName,
             Surnames = surnames,
-            SignaturePath = signaturePath,
-            SignatureNameDiffers = signatureNameDiffers,
-            SignatureRejected = signatureRejected,
-            RejectedSignatureName = rejectedSignatureName,
-            CoveringSignatureName = coveringSignatureName,
-            Signers = signers,
-            CertificateSigners = certificateSigners,
-            CertStatus = certStatus,
-            CertValidityText = certText,
-            SignatureParsed = parsed,
-            SignatureError = signatureError,
+            CoordinateBare = coordinateBare,
+            AdjectiveBare = adjectiveBare,
             Errors = errors,
             Notices = notices,
+            Stray = string.IsNullOrWhiteSpace(cipherFromName) && string.IsNullOrWhiteSpace(title.Cipher),
+        };
+    }
+
+    internal static SignatureFacts ReadSignature(string path)
+    {
+        try
+        {
+            var located = SignatureParser.Locate(path);
+            if (located is null)
+                return SignatureFacts.None;
+
+            var readSigners = located.Value.CoveringName is not null || !located.Value.ExactRejected;
+            if (!readSigners)
+            {
+                return new SignatureFacts(
+                    null,
+                    false,
+                    true,
+                    located.Value.ExactName,
+                    null,
+                    [],
+                    [],
+                    Severity.Ok,
+                    "",
+                    false,
+                    null);
+            }
+
+            var read = SignatureParser.Read(located.Value.Path);
+            return new SignatureFacts(
+                located.Value.Path,
+                located.Value.NameDiffers,
+                located.Value.ExactRejected,
+                located.Value.ExactName,
+                located.Value.CoveringName,
+                DistinctSurnames(read.Surnames),
+                read.People,
+                read.CertStatus,
+                read.CertValidityText,
+                read.Error is null,
+                read.Error);
+        }
+        catch (Exception ex)
+        {
+            return SignatureFacts.None with { Error = ex.Message };
+        }
+    }
+
+    internal static RdDocument Assemble(RdDraft draft, SignatureFacts facts)
+    {
+        var surnames = ConfirmCoordinateSurnames(
+            draft.Surnames,
+            draft.CoordinateBare,
+            draft.AdjectiveBare,
+            facts.Signers,
+            facts.CertificateSigners);
+        return new RdDocument
+        {
+            FilePath = draft.FilePath,
+            CipherFromFileName = draft.CipherFromFileName,
+            CipherFromText = draft.CipherFromText,
+            Cipher = draft.Cipher,
+            KitName = draft.KitName,
+            ElementNo = draft.ElementNo,
+            ElementName = draft.ElementName,
+            Surnames = surnames,
+            SignaturePath = facts.Path,
+            SignatureNameDiffers = facts.NameDiffers,
+            SignatureRejected = facts.Rejected,
+            RejectedSignatureName = facts.RejectedName,
+            CoveringSignatureName = facts.CoveringName,
+            Signers = facts.Signers,
+            CertificateSigners = facts.CertificateSigners,
+            CertStatus = facts.CertStatus,
+            CertValidityText = facts.CertValidityText,
+            SignatureParsed = facts.Parsed,
+            SignatureError = facts.Error,
+            Errors = draft.Errors,
+            Notices = draft.Notices,
         };
     }
 
@@ -898,4 +931,39 @@ public static partial class RdParser
 
     [GeneratedRegex(@"^[А-ЯЁ][а-яё]{2,}(?:-[А-ЯЁ][а-яё]{2,})?$")]
     private static partial Regex BareSurname();
+}
+
+internal sealed class RdDraft
+{
+    public required string FilePath { get; init; }
+    public string? CipherFromFileName { get; init; }
+    public string? CipherFromText { get; init; }
+    public string Cipher { get; init; } = "";
+    public string KitName { get; init; } = "";
+    public string ElementNo { get; init; } = "";
+    public string ElementName { get; init; } = "";
+    public List<string> Surnames { get; init; } = [];
+    public List<string> CoordinateBare { get; init; } = [];
+    public List<string> AdjectiveBare { get; init; } = [];
+    public List<string> Errors { get; init; } = [];
+    public List<Notice> Notices { get; init; } = [];
+    public bool Stray { get; init; }
+    public string FileName => Path.GetFileName(FilePath);
+}
+
+internal sealed record SignatureFacts(
+    string? Path,
+    bool NameDiffers,
+    bool Rejected,
+    string? RejectedName,
+    string? CoveringName,
+    IReadOnlyList<string> Signers,
+    IReadOnlyList<CertificateSigner> CertificateSigners,
+    Severity CertStatus,
+    string CertValidityText,
+    bool Parsed,
+    string? Error)
+{
+    public static SignatureFacts None { get; } = new(
+        null, false, false, null, null, [], [], Severity.Ok, "", false, null);
 }

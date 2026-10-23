@@ -71,7 +71,11 @@
                 <TextBlock Text="{Binding ResultDetails}" TextWrapping="Wrap" IsVisible="{Binding ShowCounters}"/>
                 <TextBlock Text="{Binding StateDetail}" TextWrapping="Wrap" IsVisible="{Binding ShowStateDetail}"/>
                 <ProgressBar Minimum="0" Maximum="1" Value="{Binding ProgressValue}" IsVisible="{Binding ShowProgress}" Height="8"/>
-                <TextBlock Text="{Binding ProgressText}" IsVisible="{Binding ShowProgress}" FontWeight="SemiBold"/>
+                <Grid ColumnDefinitions="*,Auto,Auto" IsVisible="{Binding ShowProgress}">
+                    <TextBlock Text="{Binding ProgressText}" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="1" Text="{Binding ElapsedText}" Margin="16,0,12,0" VerticalAlignment="Center" Foreground="#1F4E79"/>
+                    <Button Grid.Column="2" Classes="quiet" Content="Отмена" Click="OnCancel"/>
+                </Grid>
             </StackPanel>
         </Border>
 

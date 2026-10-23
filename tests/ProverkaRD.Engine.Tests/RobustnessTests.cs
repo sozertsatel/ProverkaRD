@@ -130,11 +130,10 @@ public class RobustnessTests
             Assert.Equal(1000m, book.ByCode[TextMatch.CodeKey("4.10.1.1.1")].TotalNet);
             Assert.Null(book.ByCode[TextMatch.CodeKey("4.10.1.1.9")].TotalNet);
 
-            Assert.Equal(5, steps.Count);
-            Assert.Equal(5, steps[^1].Total);
-            Assert.Equal(5, steps[^1].Done);
-            Assert.Contains(steps, step => step.FileName == "vesr.xlsx");
-            Assert.Contains(steps, step => step.FileName == "пояснение_ИЗМ.pdf");
+            Assert.Contains(steps, step => step.Stage == CheckStages.Ledgers && step.FileName == "vesr.xlsx");
+            Assert.Contains(steps, step => step.Stage == CheckStages.LoadKits && step.FileName == "пояснение_ИЗМ.pdf");
+            Assert.Equal(CheckStages.Report, steps[^1].Stage);
+            Assert.Equal(1, steps[^1].Overall, 3);
 
             var reportPath = Path.Combine(dir.FullName, "report.xlsx");
             ReportWriter.Write(report, reportPath, "0.1.0");

@@ -18,11 +18,14 @@ namespace ProverkaRD;
 public partial class MainWindow : Window
 {
     private readonly WorkspaceModel _model = new();
+    private readonly DispatcherTimer _elapsedTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private CancellationTokenSource? _work;
     private double _inputHeight = 240;
     private AppSettings _settings = AppSettings.Load();
 
     public MainWindow()
     {
+        _elapsedTimer.Tick += (_, _) => _model.RaiseElapsed();
         _model.Options = _settings.ToOptions();
         DataContext = _model;
         AvaloniaXamlLoader.Load(this);
@@ -39,6 +42,13 @@ public partial class MainWindow : Window
                 SyncActSplit();
             if (args.PropertyName is nameof(WorkspaceModel.ListsOpen))
                 SyncInputSplit();
+            if (args.PropertyName is nameof(WorkspaceModel.ShowProgress))
+            {
+                if (_model.ShowProgress)
+                    _elapsedTimer.Start();
+                else
+                    _elapsedTimer.Stop();
+            }
         };
         RestoreLedgers();
         Opened += (_, _) =>
@@ -62,8 +72,12 @@ public partial class MainWindow : Window
             _model.VesrPath = file;
     }
 
-    private async void OnAddRdFiles(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
-        await AddFiles(_model.AddRd, "Комплекты РД", true, "*.pdf", "*.docx");
+    private async void OnAddRdFiles(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var files = await PickFiles("Комплекты РД", true, "*.pdf", "*.docx");
+        if (files.Count > 0)
+            await LoadRd(files);
+    }
 
     private async void OnAddActFiles(object? sender, Avalonia.Interactivity.RoutedEventArgs e) =>
         await AddFiles(_model.AddAct, "Акты сдачи-приёмки", true, "*.docx");
@@ -72,7 +86,7 @@ public partial class MainWindow : Window
     {
         var folder = await PickFolder("Папка с комплектами РД");
         if (folder is not null)
-            _model.AddRd(folder);
+            await LoadRd([folder]);
     }
 
     private async void OnAddActFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -82,14 +96,18 @@ public partial class MainWindow : Window
             _model.AddAct(folder);
     }
 
+    private void OnCancel(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _work?.Cancel();
+
     private void OnClearRd(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ClearRd();
     private void OnClearActs(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => _model.ClearActs();
 
-    private void OnRdDrop(object? sender, DragEventArgs e)
+    private async void OnRdDrop(object? sender, DragEventArgs e)
     {
         if (_model.Busy)
             return;
-        DropInto(e, _model.AddRd);
+        var paths = DroppedPaths(e);
+        if (paths.Count > 0)
+            await LoadRd(paths);
     }
 
     private void OnActDrop(object? sender, DragEventArgs e)
@@ -250,15 +268,23 @@ public partial class MainWindow : Window
             return;
         }
 
-        _model.BeginCheck();
+        var token = BeginWork();
+        var generation = _model.BeginCheck();
         var input = _model.BuildInput();
         var progress = new Progress<CheckProgress>(step =>
-            Dispatcher.UIThread.Post(() => _model.ReportProgress(step)));
+        {
+            if (generation == _model.ProgressGeneration)
+                _model.ReportProgress(step);
+        });
         try
         {
-            var report = await Task.Run(() => new CheckingEngine().Run(input, progress));
+            var report = await Task.Run(() => new CheckingEngine().Run(input, progress, token), token);
             _model.Apply(report);
             RunLog.Summary(report, input);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException || token.IsCancellationRequested)
+        {
+            _model.MarkCancelled("Проверка остановлена.");
         }
         catch (Exception ex)
         {
@@ -268,7 +294,149 @@ public partial class MainWindow : Window
         finally
         {
             _model.Busy = false;
+            _model.HideProgress();
         }
+    }
+
+    private CancellationToken BeginWork()
+    {
+        _work?.Cancel();
+        _work?.Dispose();
+        _work = new CancellationTokenSource();
+        return _work.Token;
+    }
+
+    private async Task LoadRd(IReadOnlyList<string> paths)
+    {
+        if (_model.Busy || paths.Count == 0)
+            return;
+        var token = BeginWork();
+        var generation = _model.BeginLoad();
+        var batch = new RdLoadBatch();
+        var progress = new Progress<CheckProgress>(step =>
+        {
+            if (generation == _model.ProgressGeneration)
+                _model.ReportProgress(step);
+        });
+        var cancelled = false;
+        try
+        {
+            await Task.Run(() => FillRdBatch(paths, batch, progress, token), token);
+            _model.CommitRd(batch.Folders, batch.Files);
+            if (batch.EmptyFolder && batch.Files.Count == 0)
+                _model.MarkEmptyFolder("В папке нет комплектов РД (PDF или DOCX).");
+        }
+        catch (Exception ex) when (ex is OperationCanceledException || token.IsCancellationRequested)
+        {
+            cancelled = true;
+            _model.CommitRd(batch.Folders, batch.Files);
+            _model.MarkCancelled("Загрузка остановлена. Уже добавленные файлы сохранены.");
+        }
+        catch (Exception ex)
+        {
+            RunLog.Error("Загрузка комплектов", ex);
+            _model.Fail(ex.Message);
+        }
+        finally
+        {
+            _model.Busy = false;
+            if (!cancelled)
+                _model.HideProgress();
+        }
+    }
+
+    private static void FillRdBatch(IReadOnlyList<string> sources, RdLoadBatch batch, IProgress<CheckProgress> progress, CancellationToken cancellationToken)
+    {
+        var files = new List<string>();
+        foreach (var source in sources)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(source))
+                continue;
+            var io = SafePath.ForIo(source);
+            if (Directory.Exists(io))
+            {
+                batch.Folders.Add(Path.GetFullPath(source));
+                batch.SawFolder = true;
+                var before = files.Count;
+                IEnumerable<string> found;
+                try
+                {
+                    found = Directory.EnumerateFiles(io, "*", SearchOption.AllDirectories);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+
+                foreach (var file in found)
+                    ConsiderRd(file, files);
+                if (files.Count == before)
+                    batch.EmptyFolder = true;
+            }
+            else
+            {
+                ConsiderRd(io, files);
+            }
+        }
+
+        if (batch.SawFolder && files.Count > 0)
+            batch.EmptyFolder = false;
+
+        var total = files.Count;
+        for (var index = 0; index < files.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var path = files[index];
+            progress.Report(new CheckProgress(
+                CheckStages.LoadKits,
+                index + 1,
+                total,
+                Path.GetFileName(path),
+                total == 0 ? 1 : (index + 1) / (double)total));
+            var hasSignature = false;
+            try
+            {
+                hasSignature = SignatureParser.FindSignature(path) is not null;
+            }
+            catch (Exception ex)
+            {
+                RunLog.Error("Подпись рядом", ex);
+            }
+
+            batch.Files.Add((path, hasSignature));
+        }
+    }
+
+    private static void ConsiderRd(string path, List<string> files)
+    {
+        var name = Path.GetFileName(path);
+        if (name.StartsWith("~$", StringComparison.Ordinal) || name.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
+            return;
+        var extension = Path.GetExtension(path);
+        if (!extension.Equals(".pdf", StringComparison.OrdinalIgnoreCase) && !extension.Equals(".docx", StringComparison.OrdinalIgnoreCase))
+            return;
+        if (RdFileRules.IsAuxiliary(path))
+            return;
+        if (files.Any(item => string.Equals(item, path, StringComparison.OrdinalIgnoreCase)))
+            return;
+        files.Add(path);
+    }
+
+    private static List<string> DroppedPaths(DragEventArgs e)
+    {
+        var files = e.DataTransfer.TryGetFiles();
+        if (files is null)
+            return [];
+        return files.Select(file => file.TryGetLocalPath()).Where(path => path is not null).Cast<string>().ToList();
+    }
+
+    private sealed class RdLoadBatch
+    {
+        public List<string> Folders { get; } = [];
+        public List<(string Path, bool HasSignature)> Files { get; } = [];
+        public bool SawFolder { get; set; }
+        public bool EmptyFolder { get; set; }
     }
 
     private async void OnExport(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -447,6 +615,8 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     private double _progressValue;
     private string _progressText = "";
     private bool _showProgress;
+    private int _progressGeneration;
+    private readonly System.Diagnostics.Stopwatch _elapsedClock = new();
     private CheckReport? _report;
     private ActResult? _selectedAct;
     private int _outlineGeneration;
@@ -620,40 +790,103 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
     public double ProgressValue => _progressValue;
     public string ProgressText => _progressText;
     public bool ShowProgress => _showProgress;
+    public string ElapsedText => _showProgress ? CheckProgressText.Elapsed(_elapsedClock.Elapsed) : "";
+    public int ProgressGeneration => _progressGeneration;
 
-    public void BeginCheck()
+    public void RaiseElapsed()
     {
+        if (_showProgress)
+            Raise(nameof(ElapsedText));
+    }
+
+    public int BeginLoad()
+    {
+        _progressGeneration++;
         Busy = true;
         _showProgress = true;
         _progressValue = 0;
-        _progressText = "";
-        _hasResult = false;
-        Raise(nameof(HasResult));
-        Raise(nameof(ShowCounters));
-        Raise(nameof(ResultLine));
-        SetState("checking", "Идёт проверка", "Подготовка списка файлов.");
+        _progressText = "Загрузка комплектов";
+        _elapsedClock.Restart();
+        SetState("checking", "Загрузка комплектов", "");
         Raise(nameof(ShowProgress));
         Raise(nameof(ProgressValue));
         Raise(nameof(ProgressText));
+        Raise(nameof(ElapsedText));
+        return _progressGeneration;
+    }
+
+    public int BeginCheck()
+    {
+        _progressGeneration++;
+        Busy = true;
+        _showProgress = true;
+        _progressValue = 0;
+        _progressText = "Подготовка списка файлов.";
+        _hasResult = false;
+        _elapsedClock.Restart();
+        Raise(nameof(HasResult));
+        Raise(nameof(ShowCounters));
+        Raise(nameof(ResultLine));
+        SetState("checking", "Идёт проверка", "");
+        Raise(nameof(ShowProgress));
+        Raise(nameof(ProgressValue));
+        Raise(nameof(ProgressText));
+        Raise(nameof(ElapsedText));
+        return _progressGeneration;
     }
 
     public void ReportProgress(CheckProgress step)
     {
         _showProgress = true;
-        _progressValue = step.Total <= 0 ? 0 : (double)step.Done / step.Total;
-        _progressText = step.Done + " из " + step.Total + ": " + step.FileName;
-        SetState("checking", "Идёт проверка", _progressText);
+        _progressValue = double.IsFinite(step.Overall) ? Math.Clamp(step.Overall, 0, 1) : 0;
+        _progressText = step.Text;
+        var title = step.Stage == CheckStages.LoadKits ? "Загрузка комплектов" : "Идёт проверка";
+        SetState("checking", title, "");
         Raise(nameof(ShowProgress));
         Raise(nameof(ProgressValue));
         Raise(nameof(ProgressText));
+        Raise(nameof(ElapsedText));
+    }
+
+    public void HideProgress()
+    {
+        var checking = _stateKind == "checking";
+        DismissProgress();
+        Raise(nameof(ShowProgress));
+        Raise(nameof(ElapsedText));
+        if (!checking)
+            return;
+        if (_report is not null)
+            SetState("finished", "Проверка завершена", "");
+        else
+            SetState("idle", "Ожидание", "Загрузите ВЭРД и ВЭСР, добавьте акты и комплекты, затем нажмите «Проверить».");
+        StatusText = _stateTitle;
+    }
+
+    public void MarkCancelled(string detail)
+    {
+        DismissProgress();
+        Busy = false;
+        SetState("idle", "Отменено", detail);
+        StatusText = "Отменено.";
+        Raise(nameof(ShowProgress));
+        Raise(nameof(ElapsedText));
+    }
+
+    private void DismissProgress()
+    {
+        _progressGeneration++;
+        _showProgress = false;
+        _elapsedClock.Stop();
     }
 
     public void Fail(string message)
     {
-        _showProgress = false;
+        DismissProgress();
         SetState("failed", "Проверка не выполнена", message);
         StatusText = "Проверка не выполнена: " + message;
         Raise(nameof(ShowProgress));
+        Raise(nameof(ElapsedText));
     }
 
     public void MarkEmptyFolder(string detail)
@@ -673,22 +906,23 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         }
     }
 
-    public void AddRd(string path)
+    public void CommitRd(IReadOnlyList<string> folders, IReadOnlyList<(string Path, bool HasSignature)> files)
     {
-        var folder = Directory.Exists(path);
-        if (folder)
+        foreach (var folder in folders)
         {
-            var full = Path.GetFullPath(path);
-            if (!RdFolders.Any(item => string.Equals(item, full, StringComparison.OrdinalIgnoreCase)))
-                RdFolders.Add(full);
+            if (!RdFolders.Any(item => string.Equals(item, folder, StringComparison.OrdinalIgnoreCase)))
+                RdFolders.Add(folder);
         }
 
-        var added = AddPath(path, RdFiles, [".pdf", ".docx"], withSignature: true);
-        if (folder && added == 0)
+        var added = 0;
+        foreach (var file in files)
         {
-            MarkEmptyFolder("В папке нет комплектов РД (PDF или DOCX).");
-            ScheduleOutline();
+            if (TryAddPrepared(file.Path, file.HasSignature))
+                added++;
         }
+
+        if (folders.Count > 0 && added == 0)
+            ScheduleOutline();
     }
 
     public void ClearRd()
@@ -773,8 +1007,9 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         _resultLine = $"Критично {critical} · Оформление {formatting} · Предупреждений {warnings} · Без замечаний {ok}";
         _resultDetails = report.Load.Text ?? "";
         _hasResult = true;
-        _showProgress = false;
+        DismissProgress();
         Raise(nameof(ShowProgress));
+        Raise(nameof(ElapsedText));
         Raise(nameof(ResultLine));
         Raise(nameof(ResultDetails));
         Raise(nameof(HasResult));
@@ -917,6 +1152,23 @@ public sealed class WorkspaceModel : INotifyPropertyChanged
         if (withSignature)
             hasSignature = SignatureParser.FindSignature(path) is not null;
         target.Add(new InputFile { Path = path, Caption = name, HasSignature = hasSignature });
+    }
+
+    private bool TryAddPrepared(string path, bool hasSignature)
+    {
+        var name = Path.GetFileName(path);
+        if (name.StartsWith("~$", StringComparison.Ordinal) || name.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (!string.Equals(Path.GetExtension(path), ".pdf", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(Path.GetExtension(path), ".docx", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (RdFiles.Any(file => string.Equals(file.Path, path, StringComparison.OrdinalIgnoreCase)))
+            return false;
+        if (RdFileRules.IsAuxiliary(path))
+            return false;
+        _hiddenOutline.Remove(path);
+        RdFiles.Add(new InputFile { Path = path, Caption = name, HasSignature = hasSignature });
+        return true;
     }
 
     public IReadOnlyList<string> DistinctColumnValues(string key)

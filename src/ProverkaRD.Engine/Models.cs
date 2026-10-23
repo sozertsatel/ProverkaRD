@@ -309,7 +309,47 @@ public sealed class RegistryRow
     public Severity SignatureColumn => SeverityText.Worst(SignatureStatus, CertStatus);
 }
 
-public readonly record struct CheckProgress(int Done, int Total, string FileName);
+public static class CheckStages
+{
+    public const string LoadKits = "Загрузка комплектов";
+    public const string Signatures = "Проверка подписей";
+    public const string Ledgers = "Сверка с ВЭРД/ВЭСР";
+    public const string Report = "Формирование отчёта";
+}
+
+public static class CheckProgressText
+{
+    public static string Format(string stage, int done, int total, string? fileName)
+    {
+        if (stage == CheckStages.LoadKits)
+        {
+            var text = stage + ": " + done + " из " + total;
+            if (!string.IsNullOrWhiteSpace(fileName))
+                text += " — " + fileName.Trim();
+            return text;
+        }
+
+        if (stage == CheckStages.Signatures)
+            return stage + ": " + done + " из " + total;
+        return stage;
+    }
+
+    public static string Elapsed(TimeSpan elapsed)
+    {
+        if (elapsed < TimeSpan.Zero)
+            elapsed = TimeSpan.Zero;
+        var hours = (int)elapsed.TotalHours;
+        if (hours > 0)
+            return "прошло " + hours + ":" + elapsed.Minutes.ToString("00") + ":" + elapsed.Seconds.ToString("00");
+        return "прошло " + elapsed.Minutes + ":" + elapsed.Seconds.ToString("00");
+    }
+}
+
+/// <summary>Шаг длинной операции. <see cref="Overall"/> — доля 0..1 на всю операцию, без сброса между этапами.</summary>
+public readonly record struct CheckProgress(string Stage, int Done, int Total, string FileName, double Overall)
+{
+    public string Text => CheckProgressText.Format(Stage, Done, Total, FileName);
+}
 
 public sealed class CheckReport
 {

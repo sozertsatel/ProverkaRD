@@ -13,8 +13,9 @@ public sealed partial class CheckingEngine
     private string _currentActPath = "";
     private CheckOptions _options = new();
 
-    public CheckReport Run(CheckInput input, IProgress<CheckProgress>? progress = null)
+    public CheckReport Run(CheckInput input, IProgress<CheckProgress>? progress = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _findings.Clear();
         _stray.Clear();
         _currentElement = "";
@@ -25,15 +26,92 @@ public sealed partial class CheckingEngine
             VerdFileName = NameOf(input.VerdPath),
             VesrFileName = NameOf(input.VesrPath),
         };
-        var total = CountSteps(input);
-        var done = 0;
-        void Tick(string name)
+
+        var rdItems = ListRd(input);
+        var actPaths = DistinctFiles(input.ActPaths).ToList();
+        var kitCount = rdItems.Count(item => item.Kind == "kit");
+        var verdSteps = string.IsNullOrWhiteSpace(input.VerdPath) ? 0 : 1;
+        var vesrSteps = string.IsNullOrWhiteSpace(input.VesrPath) ? 0 : 1;
+        var ledgerFileSteps = verdSteps + vesrSteps + actPaths.Count;
+        var ledgerSteps = ledgerFileSteps == 0 ? 1 : ledgerFileSteps;
+        var totalUnits = rdItems.Count + kitCount + ledgerSteps + actPaths.Count + 1;
+        var clock = new ProgressClock(progress, totalUnits);
+
+        var drafts = new List<RdDraft>(kitCount);
+        var loadIndex = 0;
+        foreach (var item in rdItems)
         {
-            done++;
-            progress?.Report(new CheckProgress(Math.Min(done, Math.Max(total, 1)), Math.Max(total, 1), SafePath.FileName(name)));
+            cancellationToken.ThrowIfCancellationRequested();
+            loadIndex++;
+            clock.Advance(CheckStages.LoadKits, loadIndex, rdItems.Count, SafePath.FileName(item.Path));
+            switch (item.Kind)
+            {
+                case "folder":
+                    Remember(report, "РД", item.Path, "Это папка. Комплекты из неё читаются по списку файлов.");
+                    break;
+                case "signature":
+                    Remember(report, "РД", item.Path, "Файл подписи не является комплектом. Он учитывается при проверке ЭЦП.");
+                    break;
+                case "auxiliary":
+                    Remember(report, "РД", item.Path, "Пропущен вспомогательный файл .СВОР/_ИЗМ.");
+                    break;
+                default:
+                    drafts.Add(RdParser.ReadDraft(item.Path));
+                    break;
+            }
         }
 
+        var signable = drafts.Where(draft => !draft.Stray).ToList();
+        clock.Skip(drafts.Count - signable.Count);
+        var assembled = new List<RdDocument>(drafts.Count);
+        var signatureIndex = 0;
+        foreach (var draft in drafts)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var facts = SignatureFacts.None;
+            if (!draft.Stray)
+            {
+                signatureIndex++;
+                clock.Advance(CheckStages.Signatures, signatureIndex, signable.Count, draft.FileName);
+                facts = RdParser.ReadSignature(draft.FilePath);
+            }
+
+            assembled.Add(RdParser.Assemble(draft, facts));
+        }
+
+        var rdFiles = new List<RdDocument>();
+        foreach (var rd in assembled)
+        {
+            if (RdFileRules.IsStray(rd))
+            {
+                _stray.Add(rd);
+                Add("—", "—", "Посторонний файл", rd.FileName, "", Severity.Warning, "");
+                foreach (var error in rd.Errors)
+                    Remember(report, "РД", rd.FileName, error);
+                if (rd.Errors.Any(FileProblems.IsLockedMessage))
+                    report.LockedFiles++;
+                Absorb(report, "РД", rd.Notices);
+                continue;
+            }
+
+            rdFiles.Add(rd);
+            foreach (var error in rd.Errors)
+            {
+                Add(rd.FileName, rd.Cipher, "Чтение комплекта", error, "", Severity.Critical, error);
+                Remember(report, "РД", rd.FilePath, error);
+            }
+            if (rd.Errors.Any(FileProblems.IsLockedMessage))
+                report.LockedFiles++;
+            Absorb(report, "РД", rd.Notices);
+        }
+        _rdFilesLoaded = rdFiles.Count > 0;
+
         VerdBook? verd = null;
+        if (verdSteps == 1)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            clock.Advance(CheckStages.Ledgers, 0, 0, SafePath.FileName(input.VerdPath));
+        }
         if (string.IsNullOrWhiteSpace(input.VerdPath))
         {
             report.VerdMissing = true;
@@ -43,11 +121,9 @@ public sealed partial class CheckingEngine
         {
             report.VerdUnreadable = true;
             report.Problems.Add("Файл ВЭРД не найден: " + SafePath.FileName(input.VerdPath));
-            Tick(input.VerdPath);
         }
         else
         {
-            Tick(input.VerdPath);
             verd = VerdParser.Parse(input.VerdPath);
             report.Problems.AddRange(verd.Errors);
             Absorb(report, "ВЭРД", verd.Notices);
@@ -58,6 +134,11 @@ public sealed partial class CheckingEngine
         }
 
         VesrBook? vesr = null;
+        if (vesrSteps == 1)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            clock.Advance(CheckStages.Ledgers, 0, 0, SafePath.FileName(input.VesrPath));
+        }
         if (string.IsNullOrWhiteSpace(input.VesrPath))
         {
             report.VesrMissing = true;
@@ -67,11 +148,9 @@ public sealed partial class CheckingEngine
         {
             report.VesrUnreadable = true;
             report.Problems.Add("Файл ВЭСР не найден: " + SafePath.FileName(input.VesrPath));
-            Tick(input.VesrPath);
         }
         else
         {
-            Tick(input.VesrPath);
             vesr = VesrParser.Parse(input.VesrPath);
             report.Problems.AddRange(vesr.Errors);
             Absorb(report, "ВЭСР", vesr.Notices);
@@ -110,9 +189,10 @@ public sealed partial class CheckingEngine
         }
 
         var acts = new List<ActDocument>();
-        foreach (var path in DistinctFiles(input.ActPaths))
+        foreach (var path in actPaths)
         {
-            Tick(path);
+            cancellationToken.ThrowIfCancellationRequested();
+            clock.Advance(CheckStages.Ledgers, 0, 0, SafePath.FileName(path));
             var act = ActParser.Parse(path);
             acts.Add(act);
             foreach (var error in act.Errors)
@@ -125,48 +205,8 @@ public sealed partial class CheckingEngine
             Absorb(report, "Акт", act.Notices);
         }
 
-        var rdFiles = new List<RdDocument>();
-        foreach (var path in DistinctFiles(input.RdPaths))
-        {
-            Tick(path);
-            if (Directory.Exists(SafePath.ForIo(path)))
-            {
-                Remember(report, "РД", path, "Это папка. Комплекты из неё читаются по списку файлов.");
-                continue;
-            }
-            if (path.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
-            {
-                Remember(report, "РД", path, "Файл подписи не является комплектом. Он учитывается при проверке ЭЦП.");
-                continue;
-            }
-            if (RdFileRules.IsAuxiliary(path))
-            {
-                Remember(report, "РД", path, "Пропущен вспомогательный файл .СВОР/_ИЗМ.");
-                continue;
-            }
-            var rd = RdParser.Parse(path);
-            if (RdFileRules.IsStray(rd))
-            {
-                _stray.Add(rd);
-                Add("—", "—", "Посторонний файл", rd.FileName, "", Severity.Warning, "");
-                foreach (var error in rd.Errors)
-                    Remember(report, "РД", rd.FileName, error);
-                if (rd.Errors.Any(FileProblems.IsLockedMessage))
-                    report.LockedFiles++;
-                Absorb(report, "РД", rd.Notices);
-                continue;
-            }
-            rdFiles.Add(rd);
-            foreach (var error in rd.Errors)
-            {
-                Add(rd.FileName, rd.Cipher, "Чтение комплекта", error, "", Severity.Critical, error);
-                Remember(report, "РД", rd.FilePath, error);
-            }
-            if (rd.Errors.Any(FileProblems.IsLockedMessage))
-                report.LockedFiles++;
-            Absorb(report, "РД", rd.Notices);
-        }
-        _rdFilesLoaded = rdFiles.Count > 0;
+        if (ledgerFileSteps == 0)
+            clock.Advance(CheckStages.Ledgers, 0, 0, "");
 
         var rdByCipher = new Dictionary<string, List<RdDocument>>(StringComparer.Ordinal);
         foreach (var rd in rdFiles)
@@ -185,12 +225,18 @@ public sealed partial class CheckingEngine
 
         var usedRd = new HashSet<RdDocument>();
         foreach (var act in acts.OrderBy(a => ElementSortKey(ResolvedPreview(a)), IntArrayComparer.Instance))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            clock.Advance(CheckStages.Ledgers, 0, 0, SafePath.FileName(act.FilePath));
             CheckAct(act, verdByNumber, vesr, rdByCipher, usedRd, report);
+        }
         AbsorbLedgerRows(report, verd, vesr);
 
         foreach (var rd in rdFiles.Where(r => !usedRd.Contains(r)))
             CheckLooseRd(rd, verdByCipher, acts.Count > 0, report);
 
+        cancellationToken.ThrowIfCancellationRequested();
+        clock.Advance(CheckStages.Report, 1, 1, "");
         var grouped = FindingGrouper.Apply(_findings, _options);
         foreach (var act in report.Acts)
         {
@@ -1271,11 +1317,43 @@ public sealed partial class CheckingEngine
         };
     }
 
-    private static int CountSteps(CheckInput input) =>
-        (string.IsNullOrWhiteSpace(input.VerdPath) ? 0 : 1)
-        + (string.IsNullOrWhiteSpace(input.VesrPath) ? 0 : 1)
-        + input.ActPaths.Count(path => !string.IsNullOrWhiteSpace(path))
-        + input.RdPaths.Count(path => !string.IsNullOrWhiteSpace(path));
+    private readonly record struct RdInput(string Path, string Kind);
+
+    private static List<RdInput> ListRd(CheckInput input)
+    {
+        var items = new List<RdInput>();
+        foreach (var path in DistinctFiles(input.RdPaths))
+        {
+            if (Directory.Exists(SafePath.ForIo(path)))
+                items.Add(new RdInput(path, "folder"));
+            else if (path.EndsWith(".sig", StringComparison.OrdinalIgnoreCase))
+                items.Add(new RdInput(path, "signature"));
+            else if (RdFileRules.IsAuxiliary(path))
+                items.Add(new RdInput(path, "auxiliary"));
+            else
+                items.Add(new RdInput(path, "kit"));
+        }
+
+        return items;
+    }
+
+    private sealed class ProgressClock(IProgress<CheckProgress>? progress, int total)
+    {
+        private int _done;
+
+        public void Advance(string stage, int stageDone, int stageTotal, string fileName)
+        {
+            _done++;
+            var overall = total <= 0 ? 1d : Math.Min(1d, (double)_done / total);
+            progress?.Report(new CheckProgress(stage, stageDone, stageTotal, fileName, overall));
+        }
+
+        public void Skip(int units)
+        {
+            if (units > 0)
+                _done += units;
+        }
+    }
 
     private static void Absorb(CheckReport report, string source, IEnumerable<Notice> notices)
     {
