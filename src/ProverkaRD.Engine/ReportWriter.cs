@@ -92,8 +92,12 @@ public static class ReportWriter
         var critical = rows.Sum(row => row.Score.Critical) + loose.Critical;
         var formatting = rows.Sum(row => row.Score.Formatting) + loose.Formatting;
         var warnings = rows.Sum(row => row.Score.Warnings) + loose.Warnings;
-        sheet.Cell(2, 1).Value =
-            "ВЭРД: " + (report.VerdFileName ?? "не загружена")
+        var verdText = "ВЭРД: " + (report.VerdFileName ?? "не загружена");
+        if (!string.IsNullOrWhiteSpace(report.VerdSheetNote))
+            verdText += ". " + report.VerdSheetNote.Trim();
+        var stageText = string.IsNullOrWhiteSpace(report.Stage) ? "" : "Этап " + report.Stage.Trim() + ". ";
+        sheet.Cell(2, 1).Value = stageText
+            + verdText
             + "    ВЭСР: " + (report.VesrFileName ?? "не загружена")
             + "    Актов: " + report.Acts.Count
             + "    Критично: " + critical
@@ -366,13 +370,13 @@ public static class ReportWriter
         UseFont(sheet);
         var headers = new[]
         {
-            "№ п/п", "Элемент", "Шифр комплекта", "Наименование", "Файл PDF", "Подпись (.sig)", "Подписанты", "Статус подписи",
+            "№ п/п", "Элемент", "Шифр комплекта", "Наименование", "Файл", "Подпись (.sig)", "Подписанты", "Статус подписи",
         };
         sheet.Cell(1, 1).Value = Titled("Опись комплекта", appVersion);
         sheet.Cell(1, 1).Style.Font.Bold = true;
         sheet.Cell(1, 1).Style.Font.FontSize = 16;
         sheet.Range(1, 1, 1, headers.Length).Merge();
-        sheet.Cell(2, 1).Value = "Опись PDF. Номер и итог — только у комплектов. Посторонние файлы ниже итога, без номера. Статус подписи — по подписи и сертификату.";
+        sheet.Cell(2, 1).Value = "Опись комплектов. Номер и итог — только у комплектов. Посторонние файлы, в том числе DOCX, ниже итога, без номера. Статус подписи — по подписи и сертификату.";
         sheet.Range(2, 1, 2, headers.Length).Merge();
         sheet.Cell(2, 1).Style.Alignment.WrapText = true;
         sheet.Row(2).Height = 32;

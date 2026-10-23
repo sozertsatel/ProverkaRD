@@ -10,6 +10,7 @@ public sealed partial class CheckingEngine
     private readonly List<RdDocument> _stray = [];
     private readonly Dictionary<string, string> _contentHash = new(StringComparer.OrdinalIgnoreCase);
     private int _skippedZips;
+    private readonly List<string> _skippedZipNames = [];
     private bool _rdFilesLoaded;
     private string _currentElement = "";
     private string _currentActPath = "";
@@ -22,6 +23,7 @@ public sealed partial class CheckingEngine
         _stray.Clear();
         _contentHash.Clear();
         _skippedZips = 0;
+        _skippedZipNames.Clear();
         _currentElement = "";
         _currentActPath = "";
         _options = input.Options ?? new CheckOptions();
@@ -31,7 +33,7 @@ public sealed partial class CheckingEngine
             VesrFileName = NameOf(input.VesrPath),
         };
 
-        var rdItems = ListRd(input, _contentHash, out var skippedZips);
+        var rdItems = ListRd(input, _contentHash, _skippedZipNames, out var skippedZips);
         _skippedZips = skippedZips;
         var actPaths = DistinctFiles(input.ActPaths).ToList();
         var kitCount = rdItems.Count(item => item.Kind == "kit");
@@ -130,6 +132,9 @@ public sealed partial class CheckingEngine
         else
         {
             verd = VerdParser.Parse(input.VerdPath);
+            if (verd.SheetName.Length > 0
+                && !verd.SheetName.Trim().Equals("База", StringComparison.OrdinalIgnoreCase))
+                report.VerdSheetNote = "Лист «База» не найден, читается «" + verd.SheetName.Trim() + "».";
             report.Problems.AddRange(verd.Errors);
             Absorb(report, "ВЭРД", verd.Notices);
             if (verd.Errors.Any(FileProblems.IsLockedMessage))
@@ -261,7 +266,12 @@ public sealed partial class CheckingEngine
         foreach (var row in BuildRegistry(report, rdFiles))
             report.Registry.Add(row);
         report.Load = BuildLoadStats(report, input, acts, rdFiles, usedRd);
-        report.Stage = StageLabel.Pick(input.VerdPath, acts.Select(act => act.Stage), verd?.HeaderText);
+        report.Stage = StageLabel.Pick(
+            input.VerdPath,
+            acts.Select(act => act.Stage),
+            verd?.HeaderText,
+            acts.SelectMany(ActElementNumbers),
+            acts.SelectMany(act => act.Kits.Select(kit => kit.Cipher)));
         return report;
     }
 
@@ -947,8 +957,8 @@ public sealed partial class CheckingEngine
     private IEnumerable<RegistryRow> BuildRegistry(CheckReport report, List<RdDocument> rdFiles)
     {
         var documents = rdFiles
-            .Concat(_stray)
             .Where(rd => IsPdf(rd.FilePath))
+            .Concat(_stray.Where(rd => IsPdf(rd.FilePath) || IsDocx(rd.FilePath)))
             .OrderBy(rd => rd.FileName, StringComparer.CurrentCultureIgnoreCase);
         foreach (var rd in documents)
             yield return RegistryOf(report, rd);
@@ -1311,7 +1321,10 @@ public sealed partial class CheckingEngine
         }
 
         if (_skippedZips > 0)
+        {
             text += " пропущено zip: " + _skippedZips + ".";
+            Remember(report, "РД", "Пропущено zip: " + _skippedZipNames.Count, string.Join(", ", _skippedZipNames));
+        }
         text += " Ставка НДС: " + VatPercentText + "%.";
         return new LoadStats
         {
@@ -1417,7 +1430,15 @@ public sealed partial class CheckingEngine
 
     private readonly record struct RdInput(string Path, string Kind);
 
-    private static List<RdInput> ListRd(CheckInput input, Dictionary<string, string> hashes, out int skippedZips)
+    private static IEnumerable<string?> ActElementNumbers(ActDocument act)
+    {
+        yield return act.ElementNoFromFileName;
+        yield return act.ElementNoFromHeading;
+        foreach (var kit in act.Kits)
+            yield return kit.ElementNo;
+    }
+
+    private static List<RdInput> ListRd(CheckInput input, Dictionary<string, string> hashes, List<string> skippedZipNames, out int skippedZips)
     {
         var readZip = input.Options.ReadZipArchives;
         var seenZips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1434,7 +1455,7 @@ public sealed partial class CheckingEngine
 
             if (RdIntake.IsZip(path))
             {
-                TakeZip(path, readZip, seenZips, kits, ref skippedZips);
+                TakeZip(path, readZip, seenZips, kits, skippedZipNames, ref skippedZips);
                 continue;
             }
 
@@ -1447,11 +1468,11 @@ public sealed partial class CheckingEngine
         }
 
         foreach (var folder in input.RdFolders)
-            CollectFolderZips(folder, readZip, seenZips, kits, ref skippedZips);
+            CollectFolderZips(folder, readZip, seenZips, kits, skippedZipNames, ref skippedZips);
         foreach (var path in input.RdPaths)
         {
             if (Directory.Exists(SafePath.ForIo(path)))
-                CollectFolderZips(path, readZip, seenZips, kits, ref skippedZips);
+                CollectFolderZips(path, readZip, seenZips, kits, skippedZipNames, ref skippedZips);
         }
 
         foreach (var kit in RdIntake.Deduplicate(kits))
@@ -1470,7 +1491,7 @@ public sealed partial class CheckingEngine
         return items;
     }
 
-    private static void CollectFolderZips(string folder, bool readZip, HashSet<string> seenZips, List<string> kits, ref int skippedZips)
+    private static void CollectFolderZips(string folder, bool readZip, HashSet<string> seenZips, List<string> kits, List<string> skippedZipNames, ref int skippedZips)
     {
         var root = SafePath.ForIo(folder);
         if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
@@ -1480,7 +1501,7 @@ public sealed partial class CheckingEngine
             foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
             {
                 if (RdIntake.IsZip(file))
-                    TakeZip(file, readZip, seenZips, kits, ref skippedZips);
+                    TakeZip(file, readZip, seenZips, kits, skippedZipNames, ref skippedZips);
             }
         }
         catch
@@ -1489,7 +1510,7 @@ public sealed partial class CheckingEngine
         }
     }
 
-    private static void TakeZip(string path, bool readZip, HashSet<string> seenZips, List<string> kits, ref int skippedZips)
+    private static void TakeZip(string path, bool readZip, HashSet<string> seenZips, List<string> kits, List<string> skippedZipNames, ref int skippedZips)
     {
         var full = Path.GetFullPath(path);
         if (!seenZips.Add(full))
@@ -1497,6 +1518,7 @@ public sealed partial class CheckingEngine
         if (!readZip)
         {
             skippedZips++;
+            skippedZipNames.Add(Path.GetFileName(full));
             return;
         }
 
@@ -1507,6 +1529,7 @@ public sealed partial class CheckingEngine
         catch
         {
             skippedZips++;
+            skippedZipNames.Add(Path.GetFileName(full));
         }
     }
 

@@ -44,6 +44,16 @@ public class Stage6ReportTests
             Assert.Equal(1, report.Load.Pdfs);
             Assert.Equal(1, report.Load.LoosePdfs);
             Assert.Contains("пропущено zip: 1", report.Load.Text);
+            var skipped = Assert.Single(report.Notices, notice => notice.Place.StartsWith("Пропущено zip:", StringComparison.Ordinal));
+            Assert.Equal("Пропущено zip: 1", skipped.Place);
+            Assert.Equal("комплект.zip", skipped.Message);
+            var reportPath = Path.Combine(dir.FullName, "report.xlsx");
+            ReportWriter.Write(report, reportPath, "0.1.9");
+            using (var book = new XLWorkbook(reportPath))
+            {
+                var gaps = book.Worksheet("Пропуски");
+                Assert.Contains(gaps.RowsUsed(), row => row.Cell(2).GetString() == "Пропущено zip: 1" && row.Cell(3).GetString() == "комплект.zip");
+            }
             Assert.Equal(1, report.Findings.Count(f => f.CheckName == "Комплект вне актов"));
             Assert.DoesNotContain(report.Findings, f => f.CheckName is "Шифр" or "Наименование комплекта" or "Наименование элемента" or "Номер элемента"
                 && f.Kit.Contains("НС1", StringComparison.Ordinal));
@@ -191,14 +201,153 @@ public class Stage6ReportTests
     }
 
     [Fact]
+    public void Skipped_zips_are_one_grouped_notice()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-zips");
+        try
+        {
+            var first = Path.Combine(dir.FullName, "первый.zip");
+            var second = Path.Combine(dir.FullName, "второй.zip");
+            using (var archive = ZipFile.Open(first, ZipArchiveMode.Create))
+                archive.CreateEntry("пусто.txt");
+            using (var archive = ZipFile.Open(second, ZipArchiveMode.Create))
+                archive.CreateEntry("пусто.txt");
+
+            var report = new CheckingEngine().Run(new CheckInput { RdPaths = [first, second] });
+            var skipped = Assert.Single(report.Notices, notice => notice.Place.StartsWith("Пропущено zip:", StringComparison.Ordinal));
+            Assert.Equal("Пропущено zip: 2", skipped.Place);
+            Assert.Contains("первый.zip", skipped.Message);
+            Assert.Contains("второй.zip", skipped.Message);
+            Assert.Contains("пропущено zip: 2", report.Load.Text);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Registry_lists_foreign_docx_and_pdf_but_not_a_real_docx_kit()
+    {
+        var dir = Directory.CreateTempSubdirectory("proverkard-foreign");
+        try
+        {
+            var letter = Path.Combine(dir.FullName, "Письмо.docx");
+            var note = Path.Combine(dir.FullName, "заметка.pdf");
+            var kit = Path.Combine(dir.FullName, "100-20-3000-А-КЖ1.docx");
+            using (var doc = WordprocessingDocument.Create(letter, WordprocessingDocumentType.Document))
+            {
+                var main = doc.AddMainDocumentPart();
+                main.Document = new Document(new Body(new Paragraph(new Run(new Text("Сопроводительное письмо")))));
+                main.Document.Save();
+            }
+
+            File.WriteAllBytes(note, []);
+            WriteRd(kit, "100-20-3000-А-КЖ1", "Опоры", "6.65", "Сооружения");
+
+            var report = new CheckingEngine().Run(new CheckInput { RdPaths = [letter, note, kit] });
+            var foreign = report.Registry.Where(row => row.Foreign).Select(row => row.FileName).ToList();
+            Assert.Equal(2, foreign.Count);
+            Assert.Contains("Письмо.docx", foreign);
+            Assert.Contains("заметка.pdf", foreign);
+            Assert.DoesNotContain(report.Registry, row => row.FileName.Contains("КЖ1", StringComparison.Ordinal));
+
+            var reportPath = Path.Combine(dir.FullName, "report.xlsx");
+            ReportWriter.Write(report, reportPath, "0.1.9");
+            using var book = new XLWorkbook(reportPath);
+            var sheet = book.Worksheet("Опись комплекта");
+            Assert.Equal("Файл", sheet.Cell(4, 5).GetString());
+            Assert.Contains(sheet.CellsUsed(), cell => cell.GetString().Contains("Посторонних файлов: 2", StringComparison.Ordinal));
+            var names = sheet.Column(5).CellsUsed().Select(cell => cell.GetString()).ToList();
+            Assert.Contains("Письмо.docx", names);
+            Assert.Contains("заметка.pdf", names);
+            Assert.DoesNotContain(names, name => name.Contains("КЖ1", StringComparison.Ordinal));
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public void Spacing_and_a_glued_conjunction_are_formatting_a_missing_word_is_critical()
     {
+        const string withNa = "Мост на ПК1+74,25";
+        const string withoutNa = "Мост ПК1+74,25";
+        Assert.Contains("на", TextMatch.Normalize(withNa), StringComparison.Ordinal);
+        Assert.Contains("на", TextMatch.VisualKey(withNa), StringComparison.Ordinal);
+        Assert.DoesNotContain("на", TextMatch.Normalize(withoutNa), StringComparison.Ordinal);
+
         Assert.Equal(Severity.Formatting, TextMatch.Compare("Мост  на ПК", "Мост на ПК"));
         Assert.Equal(Severity.Formatting, TextMatch.Compare("производственно- служебное", "производственно-служебное"));
         Assert.Equal(Severity.Formatting, TextMatch.Compare("зданияи", "здания и"));
         Assert.Equal(Severity.Formatting, TextMatch.Compare("здания и", "зданияи"));
+        Assert.Equal(Severity.Formatting, TextMatch.Compare("Мост, ПК1+74,25", "Мост ПК1+74,25"));
         Assert.Equal(Severity.Critical, TextMatch.Compare("Мост ПК 10", "Мост на ПК 10"));
         Assert.Equal(Severity.Critical, TextMatch.Compare("Мост на ПК 10", "Мост ПК 10"));
+        Assert.Equal(Severity.Critical, TextMatch.Compare(withNa, withoutNa));
+        Assert.Equal(Severity.Critical, TextMatch.Compare(withoutNa, withNa));
+        Assert.Equal(Severity.Critical, TextMatch.Compare("Мост в ПК", "Мост ПК"));
+        Assert.Equal(Severity.Formatting, TextMatch.Compare("соружения", "сооружения"));
+    }
+
+    [Fact]
+    public void Missing_short_word_in_the_element_name_is_critical()
+    {
+        // В прогоне этапа 6 замечание 6.127 по «Наименование элемента» было «Оформление», а 6.126 — «Критично».
+        // Исходных строк 6.127 в репозитории нет. Нормализация слово «на» не выбрасывает:
+        // «Мост на ПК1+74,25» и «Мост ПК1+74,25» — разные слова, значит «Критично».
+        // «Оформление» остаётся, только если слова совпали: пробелы, знаки, приклеенное «и» или опечатка в 1–2 буквы.
+        var dir = Directory.CreateTempSubdirectory("proverkard-na");
+        try
+        {
+            var verd = Path.Combine(dir.FullName, "Ведомость элементов РД 05.10.2026.xlsx");
+            using (var book = new XLWorkbook())
+            {
+                var sheet = book.AddWorksheet("База");
+                sheet.Cell(1, 1).Value = "Номер элемента";
+                sheet.Cell(1, 2).Value = "Наименование элемента";
+                sheet.Cell(1, 4).Value = "Шифр РД";
+                sheet.Cell(1, 5).Value = "Наименование документации";
+                sheet.Cell(1, 7).Value = "№ Элемента по ДГП";
+                sheet.Cell(2, 1).Value = "6.127";
+                sheet.Cell(2, 2).Value = "Мост ПК1+74,25";
+                sheet.Cell(2, 4).Value = "100-20-3000-А-КЖ1";
+                sheet.Cell(2, 5).Value = "Комплект опор";
+                sheet.Cell(2, 7).Value = "6.127.1.1.1";
+                book.SaveAs(verd);
+            }
+
+            var act = Path.Combine(dir.FullName, "РД 6.127.docx");
+            using (var doc = WordprocessingDocument.Create(act, WordprocessingDocumentType.Document))
+            {
+                var main = doc.AddMainDocumentPart();
+                main.Document = new Document(new Body(
+                    new Paragraph(new Run(new Text("АКТ № 6.127"))),
+                    Table(
+                        ["№ тома", "Шифр", "Наименование документа"],
+                        [["6.127.1.1.1 (6.127)", "100-20-3000-А-КЖ1", "Комплект опор"]]),
+                    Table(
+                        ["Наименование", "Ед. изм.", "Стоимость без НДС", "НДС", "Стоимость с НДС"],
+                        [["6.127.1.1.1 Рабочая документация. Мост на ПК1+74,25", "шт", "1000", "220", "1220"]])));
+                main.Document.Save();
+            }
+
+            var report = new CheckingEngine().Run(new CheckInput
+            {
+                VerdPath = verd,
+                ActPaths = [act],
+            });
+            var element = Assert.Single(report.Findings, finding => finding.CheckName == "Наименование элемента");
+            Assert.Equal(Severity.Critical, element.Severity);
+            Assert.Contains("Мост на ПК1+74,25", element.InAct + element.ValueA + element.ValueB);
+            Assert.Contains("Мост ПК1+74,25", element.InVerd + element.ValueA + element.ValueB);
+            Assert.DoesNotContain(report.Findings, finding => finding.CheckName == "Наименование комплекта");
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
     }
 
     [Fact]

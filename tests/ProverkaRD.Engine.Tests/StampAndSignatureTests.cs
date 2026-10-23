@@ -259,7 +259,7 @@ public class StampAndSignatureTests
             Assert.Contains("Предупреждения: 1", summary.Cell(2, 1).GetString());
             Assert.Equal(1d, summary.Cell(6, 5).GetDouble());
             var opis = book.Worksheet("Опись комплекта");
-            Assert.Equal("Файл PDF", opis.Cell(4, 5).GetString());
+            Assert.Equal("Файл", opis.Cell(4, 5).GetString());
             Assert.Equal("Комплектов: 0 | Подписано: 0 | Посторонних файлов: 1", opis.Cell(5, 1).GetString());
             Assert.Equal("Посторонние файлы", opis.Cell(6, 1).GetString());
             Assert.Equal("", opis.Cell(7, 1).GetString());
@@ -422,7 +422,7 @@ public class StampAndSignatureTests
             Assert.Equal("Элемент", sheet.Cell(4, 2).GetString());
             Assert.Equal("Шифр комплекта", sheet.Cell(4, 3).GetString());
             Assert.Equal("Наименование", sheet.Cell(4, 4).GetString());
-            Assert.Equal("Файл PDF", sheet.Cell(4, 5).GetString());
+            Assert.Equal("Файл", sheet.Cell(4, 5).GetString());
             Assert.Equal("Подпись (.sig)", sheet.Cell(4, 6).GetString());
             Assert.Equal("Подписанты", sheet.Cell(4, 7).GetString());
             Assert.Equal("Статус подписи", sheet.Cell(4, 8).GetString());

@@ -776,6 +776,9 @@ public class EngineRulesTests
             Assert.DoesNotContain(report.Findings, f => f.CheckName == "Комплект вне актов" && f.ValueA.Contains("Письмо"));
             Assert.DoesNotContain(report.Findings, f => f.CheckName == "Электронная подпись" && f.InRd.Contains("Письмо"));
             Assert.Contains(report.Findings, f => f.CheckName == "Электронная подпись" && f.Kit.Contains("КМ1"));
+            var foreign = Assert.Single(report.Registry, row => row.Foreign);
+            Assert.Equal("Письмо от 01.01.2026.docx", foreign.FileName);
+            Assert.DoesNotContain(report.Registry, row => row.FileName.Contains("КМ1", StringComparison.Ordinal));
         }
         finally
         {
