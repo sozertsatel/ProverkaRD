@@ -252,9 +252,9 @@ public static class AppUpdate
 
 public static class UpdateFlow
 {
-    public static Task RunAsync(Window owner, bool interactive) => RunAsync(owner, interactive, force: false);
+    public static Task<UpdateCheckResult?> RunAsync(Window owner, bool interactive) => RunAsync(owner, interactive, force: false);
 
-    public static async Task RunAsync(Window owner, bool interactive, bool force)
+    public static async Task<UpdateCheckResult?> RunAsync(Window owner, bool interactive, bool force)
     {
         UpdateCheckResult result;
         try
@@ -265,7 +265,7 @@ public static class UpdateFlow
         {
             if (interactive || force)
                 await Tell(owner, "Не удалось проверить обновления: " + ex.Message, AppInfo.ReleasesPage);
-            return;
+            return null;
         }
 
         var page = string.IsNullOrWhiteSpace(result.PageUrl) ? AppInfo.ReleasesPage : result.PageUrl;
@@ -273,31 +273,32 @@ public static class UpdateFlow
         {
             if (interactive || force)
                 await Tell(owner, "Нет сети, проверить обновление не удалось.", page);
-            return;
+            return result;
         }
 
         if (result.Kind == UpdateCheckKind.Unavailable)
         {
             if (interactive || force)
                 await Tell(owner, result.Message, page);
-            return;
+            return result;
         }
 
-        var install = UpdateOffer.ShouldInstall(result.Kind == UpdateCheckKind.Newer, force);
+        var newer = ReleaseVersion.IsNewer(result.RemoteTag, AppInfo.Version);
+        var install = UpdateOffer.ShouldInstall(newer, force);
         if (!install)
         {
-            if (interactive && result.Kind == UpdateCheckKind.UpToDate)
-                await Tell(owner, result.Message, null);
-            return;
+            if (interactive)
+                await Tell(owner, ReleaseVersion.LatestInstalled, null);
+            return result with { Kind = UpdateCheckKind.UpToDate, Message = ReleaseVersion.LatestInstalled };
         }
 
         if (result.Kind is not (UpdateCheckKind.Newer or UpdateCheckKind.UpToDate))
-            return;
+            return result;
 
         if (string.IsNullOrWhiteSpace(result.ExeUrl))
         {
             await Tell(owner, "В релизе " + result.RemoteTag + " нет файла ProverkaRD.exe.", page);
-            return;
+            return result;
         }
 
         var notes = string.IsNullOrWhiteSpace(result.Notes) ? "Описание релиза не заполнено." : result.Notes.Trim();
@@ -305,7 +306,7 @@ public static class UpdateFlow
             ? await Ask(owner, "Переустановить версию " + result.RemoteTag + "?", notes, "Переустановить", "Отмена")
             : await Ask(owner, "Доступна версия " + result.RemoteTag + ". Что нового:", notes, "Обновить", "Позже");
         if (!update)
-            return;
+            return result;
 
         string? downloaded = null;
         var keepDownload = false;
@@ -326,6 +327,8 @@ public static class UpdateFlow
             if (!keepDownload)
                 TryDelete(downloaded);
         }
+
+        return result;
     }
 
     private static async Task<string> DownloadWithProgress(Window owner, UpdateCheckResult result)

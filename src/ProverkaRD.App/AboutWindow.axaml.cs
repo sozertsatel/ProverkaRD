@@ -38,8 +38,10 @@ public partial class AboutWindow : Window
     private async void OnCheckUpdates(object? sender, RoutedEventArgs e)
     {
         _status.Text = "Проверяем последний релиз…";
-        await UpdateFlow.RunAsync(this, interactive: true);
-        _status.Text = "Проверка завершена. Если нашлась новая версия, её можно поставить из открывшегося окна.";
+        var result = await UpdateFlow.RunAsync(this, interactive: true);
+        _status.Text = result?.Kind == UpdateCheckKind.UpToDate
+            ? ReleaseVersion.LatestInstalled
+            : "Проверка завершена. Если нашлась новая версия, её можно поставить из открывшегося окна.";
         _releases.IsVisible = true;
     }
 

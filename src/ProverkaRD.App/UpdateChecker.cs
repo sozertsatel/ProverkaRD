@@ -70,7 +70,7 @@ public static class UpdateChecker
             return new UpdateCheckResult(
                 UpdateCheckKind.UpToDate,
                 release.Tag,
-                $"Установлена актуальная версия {AppInfo.Version}.",
+                ReleaseVersion.LatestInstalled,
                 release.Body,
                 page,
                 release.Exe?.Url,
