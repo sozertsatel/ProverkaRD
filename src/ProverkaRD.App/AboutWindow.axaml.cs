@@ -40,7 +40,7 @@ public partial class AboutWindow : Window
         _status.Text = "Проверяем последний релиз…";
         var result = await UpdateFlow.RunAsync(this, interactive: true);
         _status.Text = result?.Kind == UpdateCheckKind.UpToDate
-            ? ReleaseVersion.LatestInstalled
+            ? result.Message
             : "Проверка завершена. Если нашлась новая версия, её можно поставить из открывшегося окна.";
         _releases.IsVisible = true;
     }
