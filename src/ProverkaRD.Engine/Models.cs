@@ -99,6 +99,8 @@ public sealed class ActDocument
     public IReadOnlyList<ActKit> Kits { get; init; } = [];
     public IReadOnlyList<ActCostLine> CostLines { get; init; } = [];
     public decimal? AdvanceNet { get; init; }
+    /// <summary>Фраза «Стоимость выполненных работ составляет…» под таблицей. Нет фразы — null.</summary>
+    public ActMoneyClause? MoneyText { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = [];
     public IReadOnlyList<Notice> Notices { get; init; } = [];
     /// <summary>Номер этапа из текста акта, если он есть. «Этап 7.29» сюда не попадает.</summary>

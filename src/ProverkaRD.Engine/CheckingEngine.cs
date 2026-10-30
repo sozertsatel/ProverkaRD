@@ -523,6 +523,8 @@ public sealed partial class CheckingEngine
         }
 
         NoteInternalArithmetic(label, actNet, actVat, actGross);
+        NoteMoneyText(label, act, actVat, actGross);
+        NoteActRowAgainstVerd(label, element, resolved, actElementName, actCode, verdByNumber);
 
         if (costLine is not null && vesrByAct is not null)
         {
@@ -1076,6 +1078,140 @@ public sealed partial class CheckingEngine
             TextMatch.FormatMoney(gross.Value),
             Severity.Critical,
             "Суммы внутри акта не сходятся: " + string.Join("; ", messages) + ". Ставка НДС в проверке — " + VatPercentText + "%.");
+    }
+
+    private void NoteMoneyText(string label, ActDocument act, decimal? tableVat, decimal? tableGross)
+    {
+        if (act.CostLines.Count == 0)
+            return;
+
+        var clause = act.MoneyText;
+        if (clause is null)
+        {
+            Add(label, "—", "Сумма в тексте акта", "",
+                tableGross is null ? "" : TextMatch.FormatMoney(tableGross.Value),
+                Severity.Critical,
+                "В тексте акта нет фразы «Стоимость выполненных работ составляет … рубля … копеек».");
+            return;
+        }
+
+        if (tableGross is null || !TextMatch.SameKopecks(clause.Gross, tableGross.Value))
+        {
+            Add(label, "—", "Сумма в тексте акта",
+                TextMatch.FormatMoney(clause.Gross),
+                tableGross is null ? "" : TextMatch.FormatMoney(tableGross.Value),
+                Severity.Critical,
+                tableGross is null
+                    ? "В тексте акта сумма с НДС " + TextMatch.FormatMoney(clause.Gross) + ", в таблице стоимости её нет."
+                    : "В тексте акта сумма с НДС " + TextMatch.FormatMoney(clause.Gross)
+                      + ", в таблице " + TextMatch.FormatMoney(tableGross.Value) + ".");
+        }
+
+        if (!clause.HasVat || tableVat is null || !TextMatch.SameKopecks(clause.Vat, tableVat.Value))
+        {
+            Add(label, "—", "НДС в тексте акта",
+                clause.HasVat ? TextMatch.FormatMoney(clause.Vat) : "",
+                tableVat is null ? "" : TextMatch.FormatMoney(tableVat.Value),
+                Severity.Critical,
+                !clause.HasVat
+                    ? "В тексте акта нет суммы НДС после «в том числе НДС»."
+                    : tableVat is null
+                        ? "В тексте акта НДС " + TextMatch.FormatMoney(clause.Vat) + ", в таблице стоимости его нет."
+                        : "В тексте акта НДС " + TextMatch.FormatMoney(clause.Vat)
+                          + ", в таблице " + TextMatch.FormatMoney(tableVat.Value) + ".");
+        }
+
+        if (clause.GrossWordsPresent && !clause.GrossWordsMatch)
+        {
+            Add(label, "—", "Сумма прописью",
+                clause.GrossWords,
+                TextMatch.FormatMoney(clause.Gross),
+                Severity.Critical,
+                "Сумма прописью в скобках не равна цифрам суммы с НДС.");
+        }
+
+        if (clause.VatWordsPresent && !clause.VatWordsMatch)
+        {
+            Add(label, "—", "НДС прописью",
+                clause.VatWords,
+                TextMatch.FormatMoney(clause.Vat),
+                Severity.Critical,
+                "НДС прописью в скобках не равен цифрам НДС.");
+        }
+
+        if (clause.VatPercent is decimal stated && stated != _options.VatPercent)
+        {
+            Add(label, "—", "Ставка НДС в тексте",
+                stated.ToString("0.##", CultureInfo.GetCultureInfo("ru-RU")) + "%",
+                VatPercentText + "%",
+                Severity.Critical,
+                "В тексте акта указан НДС " + stated.ToString("0.##", CultureInfo.GetCultureInfo("ru-RU"))
+                + "%, в настройках проверки " + VatPercentText + "%.");
+        }
+    }
+
+    private void NoteActRowAgainstVerd(
+        string label,
+        VerdElement? element,
+        string actNumber,
+        string actName,
+        string actCode,
+        Dictionary<string, List<VerdElement>> verdByNumber)
+    {
+        if (verdByNumber.Count == 0)
+            return;
+        if (actName.Length == 0 && actCode.Length == 0)
+            return;
+
+        var elements = verdByNumber.Values.SelectMany(list => list).ToList();
+        var actKey = TextMatch.CodeKey(actNumber);
+        var nameDiffers = actName.Length > 0
+            && (element is null || TextMatch.Compare(actName, element.Name) == Severity.Critical);
+        var codeDiffers = actCode.Length > 0
+            && (element is null || TextMatch.CodeKey(element.DgpCode) != TextMatch.CodeKey(actCode));
+
+        var nameHits = nameDiffers
+            ? Elsewhere(elements, actKey, item =>
+                item.Name.Length > 0 && TextMatch.Compare(actName, item.Name) != Severity.Critical)
+            : [];
+        var codeHits = codeDiffers
+            ? Elsewhere(elements, actKey, item =>
+                actCode.Length > 0 && TextMatch.CodeKey(item.DgpCode) == TextMatch.CodeKey(actCode))
+            : [];
+        if (nameHits.Count == 0 && codeHits.Count == 0)
+            return;
+
+        var notes = new List<string>();
+        if (codeHits.Count > 0)
+            notes.Add("код " + actCode + " в ВЭРД стоит у элемента " + string.Join(", ", codeHits));
+        if (nameHits.Count > 0)
+            notes.Add("наименование строки акта в ВЭРД стоит под номером " + string.Join(", ", nameHits));
+        var where = string.Join(", ", codeHits.Concat(nameHits).Distinct(StringComparer.OrdinalIgnoreCase));
+        Add(label, "—", "Строка акта в ВЭРД",
+            DescribeActRow(actNumber, actCode, actName),
+            "элемент " + where,
+            Severity.Critical,
+            string.Join(". ", notes) + ".");
+    }
+
+    private static List<string> Elsewhere(List<VerdElement> elements, string actKey, Func<VerdElement, bool> hit) =>
+        elements
+            .Where(item => TextMatch.CodeKey(item.Number) != actKey && hit(item))
+            .Select(item => item.Number.Trim())
+            .Where(number => number.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private static string DescribeActRow(string number, string code, string name)
+    {
+        var parts = new List<string>();
+        if (number.Length > 0)
+            parts.Add(number);
+        if (code.Length > 0)
+            parts.Add("код " + code);
+        if (name.Length > 0)
+            parts.Add(name);
+        return string.Join(", ", parts);
     }
 
     private void Add(string act, string kit, string check, string valueA, string valueB, Severity severity, string explanation)
