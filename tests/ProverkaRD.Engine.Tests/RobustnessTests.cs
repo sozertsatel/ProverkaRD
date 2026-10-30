@@ -536,6 +536,7 @@ public class RobustnessTests
         var main = doc.AddMainDocumentPart();
         main.Document = new Document(new Body(
             new Paragraph(new Run(new Text("АКТ № 4.10"))),
+            new Paragraph(new Run(new Text(ActMoneyText.DigitsSentence(1220m, 220m)))),
             new Paragraph(new Run(new Text("Приложение к акту сдачи-приёмки рабочей документации № 4.10. Расчет погашенной части аванса в размере 10 (десять) рублей 50 копеек без учета НДС."))),
             Table(
                 ["№ тома", "Шифр", "Наименование документа"],

@@ -1208,6 +1208,7 @@ public class EngineRulesTests
         var main = doc.AddMainDocumentPart();
         main.Document = new Document(new Body(
             new Paragraph(new Run(new Text("АКТ № " + element))),
+            new Paragraph(new Run(new Text(ActMoneyText.DigitsSentence(grossValue, vatValue)))),
             withAdvance
                 ? new Paragraph(new Run(new Text("Приложение к акту сдачи-приёмки рабочей документации № " + element + ". Расчет погашенной части аванса в размере 168\u00A0027 (сто шестьдесят восемь тысяч двадцать семь) рублей 54 копейки без учета НДС.")))
                 : new Paragraph(new Run(new Text(""))),
@@ -1230,6 +1231,7 @@ public class EngineRulesTests
         var main = doc.AddMainDocumentPart();
         main.Document = new Document(new Body(
             new Paragraph(new Run(new Text("АКТ № " + element))),
+            new Paragraph(new Run(new Text(ActMoneyText.DigitsSentence(gross, vat)))),
             Table(
                 ["№ тома", "Шифр", "Наименование документа"],
                 rows),

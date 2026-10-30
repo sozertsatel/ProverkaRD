@@ -17,6 +17,7 @@ public static partial class ActParser
         var costs = new List<ActCostLine>();
         string? headingNo = null;
         decimal? advance = null;
+        ActMoneyClause? moneyText = null;
         var stage = "";
 
         try
@@ -28,6 +29,7 @@ public static partial class ActParser
 
             var prose = string.Join("\n", body.Descendants<Paragraph>().Select(ParagraphText));
             stage = StageLabel.FromText(prose) ?? "";
+            moneyText = ActMoneyText.Parse(prose);
             advance = AdvancePayment.Parse(prose);
             if (advance is decimal paid)
                 advance = MoneyDecimal.Kopecks(paid);
@@ -84,6 +86,7 @@ public static partial class ActParser
             Kits = kits,
             CostLines = costs,
             AdvanceNet = advance,
+            MoneyText = moneyText,
             Errors = errors,
             Notices = notices,
             Stage = stage,

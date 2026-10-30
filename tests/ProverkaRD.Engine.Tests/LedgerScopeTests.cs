@@ -310,6 +310,7 @@ public class LedgerScopeTests
         var main = doc.AddMainDocumentPart();
         main.Document = new Document(new Body(
             new Paragraph(new Run(new Text("АКТ № " + element))),
+            new Paragraph(new Run(new Text(ActMoneyText.DigitsSentence(1220m, 220m)))),
             Table(
                 ["№ тома", "Шифр", "Наименование документа"],
                 [[code + " (" + element + ")", cipher, "Комплект"]]),

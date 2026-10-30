@@ -30,6 +30,11 @@ public static class FindingSources
             case "Код ДГП внутри акта":
             case "Номер элемента акта":
             case "Стоимость":
+            case "Сумма в тексте акта":
+            case "НДС в тексте акта":
+            case "Сумма прописью":
+            case "НДС прописью":
+            case "Ставка НДС в тексте":
                 return (Join("", valueA, "", valueB), "", "", "");
             case "Элемент в ВЭРД":
             case "Шифр в ВЭРД":
